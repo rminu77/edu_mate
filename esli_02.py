@@ -145,13 +145,37 @@ def generate_report_with_llm(student_name: str, responses: dict):
 
         student_scores = {}
         for col_alias, col_std_name in COLUMN_MAP.items():
-            if col_alias in student_raw_scores and col_std_name in std_info_df.index:
-                raw_score = student_raw_scores[col_alias]
-                mean = std_info_df.loc[col_std_name, '평균']
-                std = std_info_df.loc[col_std_name, '표준편차']
-                t_score = round(100 + 15 * ((raw_score - mean) / std))
-                percentile = percentile_df.loc[t_score, '백분위'] if t_score in percentile_df.index else "N/A"
-                student_scores[col_std_name] = {'raw': raw_score, 't_score': t_score, 'percentile': int(percentile) if percentile != "N/A" else 0}
+            # 사용자 응답을 집계한 키가 alias('직접적','관계적',...) 또는 표준명('사회적 관계',...) 중 무엇이든 매칭되도록 처리
+            if col_std_name in std_info_df.index:
+                raw_val = None
+                if col_alias in student_raw_scores:
+                    raw_val = student_raw_scores[col_alias]
+                elif col_std_name in student_raw_scores:
+                    raw_val = student_raw_scores[col_std_name]
+
+                if raw_val is not None:
+                    mean = std_info_df.loc[col_std_name, '평균']
+                    std = std_info_df.loc[col_std_name, '표준편차']
+                    t_score = round(100 + 15 * ((raw_val - mean) / std))
+                    percentile = percentile_df.loc[t_score, '백분위'] if t_score in percentile_df.index else "N/A"
+                    student_scores[col_std_name] = {
+                        'raw': raw_val,
+                        't_score': t_score,
+                        'percentile': int(percentile) if percentile != "N/A" else 0
+                    }
+
+        # 필수 동기 항목이 누락되면 평균 기반 기본값 보정(보고서 생성 중 KeyError 방지)
+        for required in ['자기성취', '사회적 관계', '직접적 보상처벌']:
+            if required not in student_scores and required in std_info_df.index:
+                mean = std_info_df.loc[required, '평균']
+                # 평균을 원점수로 간주하면 T=100이 되므로 백분위는 표에서 100이 없으면 50으로 처리
+                t_score = 100
+                percentile = percentile_df.loc[t_score, '백분위'] if t_score in percentile_df.index else 50
+                student_scores[required] = {
+                    'raw': mean,
+                    't_score': t_score,
+                    'percentile': int(percentile)
+                }
 
         # --- 2. 보고서 각 섹션별 LLM 프롬프트 생성 및 호출 (기존 코드와 동일) ---
         m_type, _, m_reason, m_coaching = get_motivation_analysis(student_scores)
