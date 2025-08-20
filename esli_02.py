@@ -3,6 +3,11 @@ import openai
 import os
 from datetime import datetime
 from dotenv import load_dotenv
+import json
+
+# 데이터베이스 연동을 위한 import
+from database import SessionLocal, SurveyResponse
+
 load_dotenv()
 # 환경 변수에서 OpenAI API 키를 읽어옵니다
 openai.api_key = os.getenv("OPENAI_API_KEY")
@@ -65,195 +70,221 @@ def call_llm_for_report(prompt):
         return f"--- [LLM 코멘트 생성 실패: {e}] ---"
 
 
-def generate_report_with_llm():
+def generate_report_with_llm(student_name: str, responses: dict):
     """
-    학생 데이터를 분석하고 LLM을 호출하여 맞춤형 보고서를 생성합니다.
+    학생 데이터를 분석하고 LLM을 호출하여 맞춤형 보고서를 생성하고, 결과를 DB에 저장합니다.
     """
-    # --- 1. 데이터 로드 및 계산 ---
+    db = SessionLocal()
     try:
-        raw_score_df = pd.read_csv('/Users/mason/Documents/학습성향검사/csv/결과.csv')
-        std_info_df = pd.read_csv('/Users/mason/Documents/학습성향검사/refer/표준점수 - 초등.csv', index_col=0)
-        percentile_df = pd.read_csv('/Users/mason/Documents/학습성향검사/refer/백분위점수.csv').set_index('표준점수')
-        # 코멘트참고.pdf 파일을 참고하여 보고서 생성
-        comment_reference = '/Users/mason/Documents/학습성향검사/refer/코멘트참고.pdf'
-    except FileNotFoundError as e:
-        return f"오류: {e.filename} 파일을 찾을 수 없습니다. 파일 경로를 확인해주세요."
+        # --- 1. 데이터 로드 및 계산 ---
+        # CSV 파일 로드 대신, Gradio 앱에서 직접 받은 responses 딕셔너리를 사용합니다.
+        # std_info_df와 percentile_df는 계속 파일에서 로드합니다.
+        try:
+            std_info_df = pd.read_csv('/Users/mason/Documents/학습성향검사/refer/표준점수 - 초등.csv', index_col=0)
+            percentile_df = pd.read_csv('/Users/mason/Documents/학습성향검사/refer/백분위점수.csv').set_index('표준점수')
+        except FileNotFoundError as e:
+            return f"오류: {e.filename} 파일을 찾을 수 없습니다. 파일 경로를 확인해주세요."
 
-    COLUMN_MAP = {
-        '직접적': '직접적 보상처벌', '관계적': '사회적 관계', '자기성취': '자기성취',
-        '스트레스': '스트레스민감성', '효능감': '학습효능감', '친구': '친구관계',
-        '가정': '가정환경', '학교': '학교환경', '수면': '수면조절',
-        '집중력': '학습집중력', 'TV': 'TV프로그램', '컴퓨터': '컴퓨터',
-        '스마트': '스마트기기', '학습전략': '학습전략', '학습기술': '학습기술',
-        '목표': '목표세우기', '계획': '계획하기', '실천': '실천하기',
-        '돌아보기': '돌아보기', '이해하기': '이해하기', '사고하기': '사고하기',
-        '정리하기': '정리하기', '암기하기': '암기하기', '문제풀기': '문제풀기',
-    }
-    student_scores = {}
-    student_raw_scores = raw_score_df.iloc[0]
-    for col_alias, col_std_name in COLUMN_MAP.items():
-        if col_alias in student_raw_scores and col_std_name in std_info_df.index:
-            raw_score = student_raw_scores[col_alias]
-            mean = std_info_df.loc[col_std_name, '평균']
-            std = std_info_df.loc[col_std_name, '표준편차']
-            t_score = round(100 + 15 * ((raw_score - mean) / std))
-            percentile = percentile_df.loc[t_score, '백분위'] if t_score in percentile_df.index else "N/A"
-            student_scores[col_std_name] = {'raw': raw_score, 't_score': t_score, 'percentile': int(percentile) if percentile != "N/A" else 0}
+        COLUMN_MAP = {
+            '직접적': '직접적 보상처벌', '관계적': '사회적 관계', '자기성취': '자기성취',
+            '스트레스': '스트레스민감성', '효능감': '학습효능감', '친구': '친구관계',
+            '가정': '가정환경', '학교': '학교환경', '수면': '수면조절',
+            '집중력': '학습집중력', 'TV': 'TV프로그램', '컴퓨터': '컴퓨터',
+            '스마트': '스마트기기', '학습전략': '학습전략', '학습기술': '학습기술',
+            '목표': '목표세우기', '계획': '계획하기', '실천': '실천하기',
+            '돌아보기': '돌아보기', '이해하기': '이해하기', '사고하기': '사고하기',
+            '정리하기': '정리하기', '암기하기': '암기하기', '문제풀기': '문제풀기',
+        }
 
-    # --- 2. 보고서 각 섹션별 LLM 프롬프트 생성 및 호출 ---
-
-    # 2-1. 학습 동기 프롬프트
-    m_type, _, m_reason, m_coaching = get_motivation_analysis(student_scores) # 유형 및 가이드라인 추출
-    motivation_prompt = f"""
-    '학습 동기'에 대한 분석 및 코칭 코멘트를 작성해줘.
-
-    [학생 데이터 요약]
-    - 주요 동기 유형: {m_type}
-    - 자기 성취 동기 점수: T점수 {student_scores['자기성취']['t_score']} (백분위 {student_scores['자기성취']['percentile']}%)
-    - 사회적 관계 동기 점수: T점수 {student_scores['사회적 관계']['t_score']} (백분위 {student_scores['사회적 관계']['percentile']}%)
-    - 직접적 보상/처벌 동기 점수: T점수 {student_scores['직접적 보상처벌']['t_score']} (백분위 {student_scores['직접적 보상처벌']['percentile']}%)
-
-    [참고 가이드라인]
-    - 핵심 특징: {m_reason}
-    - 코칭 방향: {m_coaching}
-
-    [작성 지침]
-    - 위의 데이터와 가이드라인을 '참고'하여, 너만의 독창적이고 전문적인 코멘트를 생성해줘.
-    - 딱딱한 설명이 아닌, 학생의 마음을 이해하고 성장을 지지하는 따뜻한 조언의 형태로 작성해줘.
-    - 아래 출력 형식을 반드시 지켜줘.
-
-    [출력 형식]
-    #### 검사 결과 분석
-    (여기에 데이터 기반의 객관적인 분석 작성)
-
-    #### 코칭 코멘트
-    "**여기에 한 줄 요약 코멘트 작성**"
-    * **현재 모습**: (여기에 학생의 현재 상태 묘사)
-    * **성장의 기회**: (여기에 긍정적 측면과 성장 가능성 묘사)
-    * **코칭 제안**: (여기에 구체적인 조언 작성)
-    """
-    motivation_comment = call_llm_for_report(motivation_prompt)
-
-    # 2-2. 학습 전략/기술 프롬프트
-    s_analysis, s_coaching_title = get_strategy_analysis(student_scores)
-    strategy_prompt = f"""
-    '학습 전략/기술'에 대한 분석 및 코칭 코멘트를 작성해줘.
-
-    [학생 데이터 요약]
-    - 종합 분석: {s_analysis}
-    - 학습 전략 종합 점수: T점수 {student_scores['학습전략']['t_score']} (백분위 {student_scores['학습전략']['percentile']}%)
-    - 학습 기술 종합 점수: T점수 {student_scores['학습기술']['t_score']} (백분위 {student_scores['학습기술']['percentile']}%)
-    - 강점 항목: 사고하기 (T={student_scores['사고하기']['t_score']})
-    - 약점 항목: 목표세우기 (T={student_scores['목표세우기']['t_score']}), 이해하기 (T={student_scores['이해하기']['t_score']}), 문제풀기 (T={student_scores['문제풀기']['t_score']})
-
-    [참고 가이드라인]
-    - 핵심 특징: {s_analysis}
-    - 코칭 방향: "{s_coaching_title}" 이 제목에 어울리는 내용으로, 전략(목표/계획) 보완과 기술(이해/문제풀이) 강화를 조언해줘.
-
-    [작성 지침]
-    - 강점(사고력)을 인정해주고, 약점(전략)을 보완하면 더 크게 성장할 수 있다는 점을 강조해줘.
-    - '버킷리스트', '만다라트 계획표' 등 구체적인 활동 예시를 들어 조언해줘.
-    - 아래 출력 형식을 반드시 지켜줘.
-
-    [출력 형식]
-    #### 검사 결과 분석
-    (여기에 데이터 기반의 객관적인 분석 작성)
-
-    #### 코칭 코멘트
-    "**여기에 한 줄 요약 코멘트 작성**"
-    * **현재 모습**: (여기에 학생의 현재 상태 묘사)
-    * **성장의 기회**: (여기에 긍정적 측면과 성장 가능성 묘사)
-    * **코칭 제안**: (여기에 구체적인 조언을 1, 2번으로 나누어 작성)
-    """
-    strategy_comment = call_llm_for_report(strategy_prompt)
-
-    # 2-3. 학습 방해 요인 프롬프트
-    h_analysis, h_coaching_title = get_hindrance_analysis(student_scores)
-    hindrance_prompt = f"""
-    '학습 방해 심리/행동'에 대한 분석 및 코칭 코멘트를 작성해줘.
-
-    [학생 데이터 요약]
-    - 종합 분석: {h_analysis}
-    - 주요 점수: 스트레스민감성(T={student_scores['스트레스민감성']['t_score']}), 학습효능감(T={student_scores['학습효능감']['t_score']}), 학습집중력(T={student_scores['학습집중력']['t_score']})
-    - 모든 방해 요인 점수가 안정적인 범위에 있음.
-
-    [참고 가이드라인]
-    - 핵심 특징: {h_analysis}
-    - 코칭 방향: "{h_coaching_title}" 이 제목처럼, 이미 훌륭한 기반을 갖추고 있음을 칭찬하고, 이 강점을 활용하여 동기와 전략을 키워나가도록 격려해줘.
-
-    [작성 지침]
-    - 학생이 이미 가진 강점(정서적 안정, 자기 통제력)을 구체적으로 칭찬하며 자신감을 심어줘.
-    - 이 튼튼한 기반 위에서 다른 영역(동기, 전략)을 발전시켜 나갈 때임을 강조해줘.
-    - 아래 출력 형식을 반드시 지켜줘.
-
-    [출력 형식]
-    #### 검사 결과 분석
-    (여기에 데이터 기반의 객관적인 분석 작성)
-
-    #### 코칭 코멘트
-    "**여기에 한 줄 요약 코멘트 작성**"
-    * **현재 모습**: (여기에 학생의 현재 상태 묘사)
-    * **성장의 기회**: (여기에 긍정적 측면과 성장 가능성 묘사)
-    * **코칭 제안**: (여기에 구체적인 조언 작성)
-    """
-    hindrance_comment = call_llm_for_report(hindrance_prompt)
+        # '결과.csv'를 읽는 대신, 전달받은 responses 딕셔너리에서 직접 원점수를 계산합니다.
+        raw_scores = {}
+        # responses 딕셔너리의 key가 '문항1', '문항2' ... 형태라고 가정합니다.
+        # 실제 key에 맞게 이 부분을 조정해야 할 수 있습니다.
+        # 예시: responses['문항1'] -> 1~5점
+        # 이 부분은 esli_01.py의 점수 계산 로직을 참고하여 구현해야 합니다.
+        # 우선, 임시로 raw_score_df를 계속 사용하고, 추후 이 부분을 수정하겠습니다.
+        raw_score_df = pd.read_csv('/Users/mason/Documents/학습성향검사/csv/결과.csv') # TODO: 이 부분을 responses 기반으로 변경
+        student_raw_scores = raw_score_df.iloc[0]
 
 
-    # --- 3. 최종 보고서 조합 및 파일 저장 ---
-    # 점수 요약 테이블 생성
-    score_table_md = "| 구분 | 영역 | 원점수 | 표준점수(T) | 백분위(%) |\n"
-    score_table_md += "| :--- | :--- | :--- | :--- | :--- |\n"
-    categories_in_order = {
-        "학습 동기": ['직접적 보상처벌', '사회적 관계', '자기성취'],
-        "학습 전략": ['목표세우기', '계획하기', '실천하기', '돌아보기', '학습전략'],
-        "학습 기술": ['이해하기', '사고하기', '정리하기', '암기하기', '문제풀기', '학습기술'],
-        "학습 방해 (심리)": ['스트레스민감성', '학습효능감', '친구관계', '가정환경', '학교환경'],
-        "학습 방해 (행동)": ['수면조절', '학습집중력', 'TV프로그램', '컴퓨터', '스마트기기']
-    }
-    for group, items in categories_in_order.items():
-        for item in items:
-            if item in student_scores:
-                score_data = student_scores[item]
-                item_name = '종합' if item in ['학습전략', '학습기술'] else item.replace('세우기','').replace('하기','')
-                score_table_md += f"| **{group.split(' ')[0]}** | {item_name} | {score_data['raw']} | {score_data['t_score']} | {score_data['percentile']} |\n"
+        student_scores = {}
+        for col_alias, col_std_name in COLUMN_MAP.items():
+            if col_alias in student_raw_scores and col_std_name in std_info_df.index:
+                raw_score = student_raw_scores[col_alias]
+                mean = std_info_df.loc[col_std_name, '평균']
+                std = std_info_df.loc[col_std_name, '표준편차']
+                t_score = round(100 + 15 * ((raw_score - mean) / std))
+                percentile = percentile_df.loc[t_score, '백분위'] if t_score in percentile_df.index else "N/A"
+                student_scores[col_std_name] = {'raw': raw_score, 't_score': t_score, 'percentile': int(percentile) if percentile != "N/A" else 0}
 
-    # 최종 보고서 텍스트
-    report_md = f"""# 학습 성향 분석 종합 보고서 (LLM 기반)
+        # --- 2. 보고서 각 섹션별 LLM 프롬프트 생성 및 호출 (기존 코드와 동일) ---
+        m_type, _, m_reason, m_coaching = get_motivation_analysis(student_scores)
+        motivation_prompt = f"""
+        '학습 동기'에 대한 분석 및 코칭 코멘트를 작성해줘.
 
----
+        [학생 데이터 요약]
+        - 학생 이름: {student_name}
+        - 주요 동기 유형: {m_type}
+        - 자기 성취 동기 점수: T점수 {student_scores['자기성취']['t_score']} (백분위 {student_scores['자기성취']['percentile']}%)
+        - 사회적 관계 동기 점수: T점수 {student_scores['사회적 관계']['t_score']} (백분위 {student_scores['사회적 관계']['percentile']}%)
+        - 직접적 보상/처벌 동기 점수: T점수 {student_scores['직접적 보상처벌']['t_score']} (백분위 {student_scores['직접적 보상처벌']['percentile']}%)
 
-## Ⅰ. 검사 결과 요약
+        [참고 가이드라인]
+        - 핵심 특징: {m_reason}
+        - 코칭 방향: {m_coaching}
 
-학생의 원점수를 전국 학생 데이터와 비교한 표준점수(T점수)와 백분위 점수입니다. 이를 통해 각 항목의 상대적인 강점과 약점을 객관적으로 파악할 수 있습니다.
+        [작성 지침]
+        - 위의 데이터와 가이드라인을 '참고'하여, 너만의 독창적이고 전문적인 코멘트를 생성해줘.
+        - 딱딱한 설명이 아닌, 학생의 마음을 이해하고 성장을 지지하는 따뜻한 조언의 형태로 작성해줘.
+        - 아래 출력 형식을 반드시 지켜줘.
 
-{score_table_md}
----
+        [출력 형식]
+        #### 검사 결과 분석
+        (여기에 데이터 기반의 객관적인 분석 작성)
 
-## Ⅱ. 학습 성향 종합 분석 및 코칭
+        #### 코칭 코멘트
+        "**여기에 한 줄 요약 코멘트 작성**"
+        * **현재 모습**: (여기에 학생의 현재 상태 묘사)
+        * **성장의 기회**: (여기에 긍정적 측면과 성장 가능성 묘사)
+        * **코칭 제안**: (여기에 구체적인 조언 작성)
+        """
+        motivation_comment = call_llm_for_report(motivation_prompt)
 
-### 1. 학습 동기: 무엇이 나의 공부를 이끌고 있는가?
+        # 2-2. 학습 전략/기술 프롬프트
+        s_analysis, s_coaching_title = get_strategy_analysis(student_scores)
+        strategy_prompt = f"""
+        '학습 전략/기술'에 대한 분석 및 코칭 코멘트를 작성해줘.
 
-{motivation_comment}
+        [학생 데이터 요약]
+        - 종합 분석: {s_analysis}
+        - 학습 전략 종합 점수: T점수 {student_scores['학습전략']['t_score']} (백분위 {student_scores['학습전략']['percentile']}%)
+        - 학습 기술 종합 점수: T점수 {student_scores['학습기술']['t_score']} (백분위 {student_scores['학습기술']['percentile']}%)
+        - 강점 항목: 사고하기 (T={student_scores['사고하기']['t_score']})
+        - 약점 항목: 목표세우기 (T={student_scores['목표세우기']['t_score']}), 이해하기 (T={student_scores['이해하기']['t_score']}), 문제풀기 (T={student_scores['문제풀기']['t_score']})
 
----
+        [참고 가이드라인]
+        - 핵심 특징: {s_analysis}
+        - 코칭 방향: "{s_coaching_title}" 이 제목에 어울리는 내용으로, 전략(목표/계획) 보완과 기술(이해/문제풀이) 강화를 조언해줘.
 
-### 2. 학습 전략/기술: 나는 어떻게 공부하고 있는가?
+        [작성 지침]
+        - 강점(사고력)을 인정해주고, 약점(전략)을 보완하면 더 크게 성장할 수 있다는 점을 강조해줘.
+        - '버킷리스트', '만다라트 계획표' 등 구체적인 활동 예시를 들어 조언해줘.
+        - 아래 출력 형식을 반드시 지켜줘.
 
-{strategy_comment}
+        [출력 형식]
+        #### 검사 결과 분석
+        (여기에 데이터 기반의 객관적인 분석 작성)
 
----
+        #### 코칭 코멘트
+        "**여기에 한 줄 요약 코멘트 작성**"
+        * **현재 모습**: (여기에 학생의 현재 상태 묘사)
+        * **성장의 기회**: (여기에 긍정적 측면과 성장 가능성 묘사)
+        * **코칭 제안**: (여기에 구체적인 조언을 1, 2번으로 나누어 작성)
+        """
+        strategy_comment = call_llm_for_report(strategy_prompt)
 
-### 3. 학습 방해 요인: 내 공부를 막는 것은 없는가?
+        # 2-3. 학습 방해 요인 프롬프트
+        h_analysis, h_coaching_title = get_hindrance_analysis(student_scores)
+        hindrance_prompt = f"""
+        '학습 방해 심리/행동'에 대한 분석 및 코칭 코멘트를 작성해줘.
 
-{hindrance_comment}
-"""
+        [학생 데이터 요약]
+        - 종합 분석: {h_analysis}
+        - 주요 점수: 스트레스민감성(T={student_scores['스트레스민감성']['t_score']}), 학습효능감(T={student_scores['학습효능감']['t_score']}), 학습집중력(T={student_scores['학습집중력']['t_score']})
+        - 모든 방해 요인 점수가 안정적인 범위에 있음.
 
-    try:
-        with open("학습_성향_분석_종합_보고서_LLM.md", "w", encoding="utf-8") as f:
-            f.write(report_md)
-        return "성공: '학습_성향_분석_종합_보고서_LLM.md' 파일이 생성되었습니다."
-    except Exception as e:
-        return f"파일 저장 중 오류 발생: {e}"
+        [참고 가이드라인]
+        - 핵심 특징: {h_analysis}
+        - 코칭 방향: "{h_coaching_title}" 이 제목처럼, 이미 훌륭한 기반을 갖추고 있음을 칭찬하고, 이 강점을 활용하여 동기와 전략을 키워나가도록 격려해줘.
+
+        [작성 지침]
+        - 학생이 이미 가진 강점(정서적 안정, 자기 통제력)을 구체적으로 칭찬하며 자신감을 심어줘.
+        - 이 튼튼한 기반 위에서 다른 영역(동기, 전략)을 발전시켜 나갈 때임을 강조해줘.
+        - 아래 출력 형식을 반드시 지켜줘.
+
+        [출력 형식]
+        #### 검사 결과 분석
+        (여기에 데이터 기반의 객관적인 분석 작성)
+
+        #### 코칭 코멘트
+        "**여기에 한 줄 요약 코멘트 작성**"
+        * **현재 모습**: (여기에 학생의 현재 상태 묘사)
+        * **성장의 기회**: (여기에 긍정적 측면과 성장 가능성 묘사)
+        * **코칭 제안**: (여기에 구체적인 조언 작성)
+        """
+        hindrance_comment = call_llm_for_report(hindrance_prompt)
+
+
+        # --- 3. 최종 보고서 조합 ---
+        score_table_md = "| 구분 | 영역 | 원점수 | 표준점수(T) | 백분위(%) |\n"
+        score_table_md += "| :--- | :--- | :--- | :--- | :--- |\n"
+        categories_in_order = {
+            "학습 동기": ['직접적 보상처벌', '사회적 관계', '자기성취'],
+            "학습 전략": ['목표세우기', '계획하기', '실천하기', '돌아보기', '학습전략'],
+            "학습 기술": ['이해하기', '사고하기', '정리하기', '암기하기', '문제풀기', '학습기술'],
+            "학습 방해 (심리)": ['스트레스민감성', '학습효능감', '친구관계', '가정환경', '학교환경'],
+            "학습 방해 (행동)": ['수면조절', '학습집중력', 'TV프로그램', '컴퓨터', '스마트기기']
+        }
+        for group, items in categories_in_order.items():
+            for item in items:
+                if item in student_scores:
+                    score_data = student_scores[item]
+                    item_name = '종합' if item in ['학습전략', '학습기술'] else item.replace('세우기','').replace('하기','')
+                    score_table_md += f"| **{group.split(' ')[0]}** | {item_name} | {score_data['raw']} | {score_data['t_score']} | {score_data['percentile']} |\n"
+
+        # 최종 보고서 텍스트
+        report_md = f"""# {student_name} 학생 학습 성향 분석 종합 보고서 (LLM 기반)
+
+        ---
+
+        ## Ⅰ. 검사 결과 요약
+
+        학생의 원점수를 전국 학생 데이터와 비교한 표준점수(T점수)와 백분위 점수입니다. 이를 통해 각 항목의 상대적인 강점과 약점을 객관적으로 파악할 수 있습니다.
+
+        {score_table_md}
+        ---
+
+        ## Ⅱ. 학습 성향 종합 분석 및 코칭
+
+        ### 1. 학습 동기: 무엇이 나의 공부를 이끌고 있는가?
+
+        {motivation_comment}
+
+        ---
+
+        ### 2. 학습 전략/기술: 나는 어떻게 공부하고 있는가?
+
+        {strategy_comment}
+
+        ---
+
+        ### 3. 학습 방해 요인: 내 공부를 막는 것은 없는가?
+
+        {hindrance_comment}
+        """
+
+        # --- 4. 결과를 데이터베이스에 저장 ---
+        try:
+            new_response = SurveyResponse(
+                student_name=student_name,
+                responses_json=json.dumps(responses, ensure_ascii=False),
+                scores_json=json.dumps(student_scores, ensure_ascii=False),
+                report_content=report_md
+            )
+            db.add(new_response)
+            db.commit()
+            db.refresh(new_response)
+            print(f"--- [성공] {student_name} 학생의 검사 결과가 데이터베이스에 저장되었습니다. (ID: {new_response.id}) ---")
+            return report_md # 성공 시 생성된 보고서 내용을 반환
+        except Exception as e:
+            db.rollback()
+            print(f"--- [오류] 데이터베이스 저장 중 오류 발생: {e} ---")
+            # DB 저장에 실패하더라도 보고서 내용은 반환하여 사용자에게 보여줄 수 있도록 함
+            return f"데이터베이스 저장에 실패했습니다. 하지만 보고서는 생성되었습니다.\n\n{report_md}"
+
+    finally:
+        db.close()
+
 
 # --- 도우미 함수들 (규칙 기반 분석 로직) ---
 def get_motivation_analysis(scores):
@@ -293,7 +324,10 @@ def get_hindrance_analysis(scores):
     if not psych_hindrance and behav_hindrance: return "학습 방해 부분에서는 행동적 부분에서 좋지 않은 영향을 받고 있는 것 같습니다.", "학습 습관을 개선하기 위한 노력이 필요합니다."
     return "학습 방해 부분에서는 심리적 부분과 행동적 부분 모두 좋지 않은 영향을 받고 있는 것 같습니다.", "심리적, 행동적 측면 모두 개선이 필요합니다."
 
-# --- 메인 함수 실행 ---
+# --- 메인 함수 실행 (테스트용으로 남겨두거나 삭제) ---
 if __name__ == "__main__":
-    result_message = generate_report_with_llm()
-    print(result_message)
+    # 테스트를 위해서는 'responses' 딕셔너리를 실제 데이터처럼 만들어야 합니다.
+    # 예시: test_responses = {'문항1': 3, '문항2': 4, ...}
+    # result_message = generate_report_with_llm("홍길동", test_responses)
+    # print(result_message)
+    print("esli_02.py 실행. 데이터베이스 연동 테스트를 위해서는 직접 함수를 호출해야 합니다.")

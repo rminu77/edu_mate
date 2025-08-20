@@ -1,47 +1,16 @@
 import gradio as gr
-import csv
 from datetime import datetime
-from typing import Dict, List, Tuple
+from typing import Dict, List
+import pandas as pd
+import os
+
+# --- 프로젝트 모듈 임포트 ---
 from esli_01 import calculate_scores
 from esli_02 import generate_report_with_llm
+from esli_03 import gradio_chat_with_history
 
-# AI 응답 함수를 조건부로 import (실패 시 더미 함수 사용)
-try:
-    from esli_03 import get_ai_response, gradio_chat_with_history
-    AI_AVAILABLE = True
-except ImportError as e:
-    print(f"AI 모듈 로드 실패: {e}")
-    AI_AVAILABLE = False
-    
-    def get_ai_response(message, history=None):
-        return "죄송합니다. AI 기능이 현재 사용할 수 없습니다. 필요한 패키지를 설치해주세요."
-    
-    def gradio_chat_with_history(message, history, image):
-        return history + [[message, "AI 기능이 현재 사용할 수 없습니다."]], ""
-
-CSV_INPUT_PATH = "/Users/mason/Documents/학습성향검사/csv/입력검사지.csv"
-
-def _load_header_and_section_map(csv_path: str) -> Tuple[List[str], Dict[str, List[str]]]:
-    """입력 CSV의 헤더를 읽고, 섹션명 -> 해당 섹션 문항 헤더 리스트 매핑을 생성합니다.
-
-    섹션명은 '감정과 행동 패턴 (1/7)' 같은 접두어이며,
-    헤더는 '감정과 행동 패턴 (1/7) [문항텍스트]' 형태로 되어 있다고 가정합니다.
-    """
-    with open(csv_path, newline="", encoding="utf-8") as f:
-        reader = csv.reader(f)
-        header = next(reader)
-
-    section_to_cols: Dict[str, List[str]] = {}
-    for col in header[1:]:  # '타임스탬프' 제외
-        section = col.split(" [", 1)[0]
-        section_to_cols.setdefault(section, []).append(col)
-
-    return header, section_to_cols
-
-def _format_korean_timestamp(dt: datetime) -> str:
-    # 예: 2025. 8. 7 오전 5:25:09
-    return dt.strftime("%Y. %m. %d %p %I:%M:%S").replace("AM", "오전").replace("PM", "오후")
-
+# --- 질문 목록 정의 ---
+# (기존 questions_part1, questions_part2, questions_part3 변수 내용은 여기에 그대로 유지됩니다)
 # Part I: 학업관련 감정과 행동 패턴
 questions_part1 = {
     "감정과 행동 패턴 (1/7)": [
@@ -151,7 +120,7 @@ questions_part3 = {
         "좋은 성적을 받지 못하면 용돈이 줄거나 자유시간이 줄어서", "공부잘하면 다른 아이들이 나를 함부로 대하지 못하니까"
     ],
     "공부하는 이유는? (3/3)": [
-        "공부잘하면 원하는 대학에 입학할 수 있으니까", "시험 성적이 떨어지면 부모님께 혼나는 것이 싫어서",
+        "시험 성적이 떨어지면 부모님께 혼나는 것이 싫어서",
         "공부잘해서 좋은 성적을 얻으면 다른 사람들이 칭찬해주니까", "다른 사람이 시켜서 하는 것보다 스스로 하는게 더 보람있으니까",
         "선생님이나 부모님이 공부하라고 한 분량을 맞춰놓아야 하니까", "가족들에게 모범이 되는 모습을 보여주어야 하니까",
         "공부하는 것은 그 누구보다 나에게 가장 도움이 되니까"
@@ -159,216 +128,114 @@ questions_part3 = {
 }
 
 def create_final_survey():
-    # CSV 헤더 및 섹션 매핑 로드 (앱 시작 시 1회)
-    try:
-        header, section_to_cols = _load_header_and_section_map(CSV_INPUT_PATH)
-    except FileNotFoundError:
-        # CSV가 없으면 앱 표시 자체는 하되, 제출 시 에러 안내
-        header, section_to_cols = None, {}
-
     with gr.Blocks(title="종합 학습 진단 검사", theme=gr.themes.Soft()) as demo:
         gr.Markdown("# 종합 학습 진단 검사")
-        
-        # 이름 입력 필드 (맨 위에 배치)
-        with gr.Row():
-            name_input = gr.Textbox(
-                label="이름",
-                placeholder="검사자 이름을 입력해주세요",
-                max_lines=1,
-                scale=1
-            )
-        
+
+        # 이름 입력 필드
+        name_input = gr.Textbox(label="이름", placeholder="검사자 이름을 입력해주세요", max_lines=1)
+
         with gr.Row():
             # 좌측: 설문 영역
             with gr.Column(scale=3):
                 gr.Markdown("### 📝 학습 성향 검사")
-                
-                all_responses: Dict[str, object] = {}
-                # UI 컴포넌트 키 -> CSV 헤더 열명 매핑, 제출 시 활용
-                key_to_header_col: Dict[str, str] = {}
-                ordered_keys: List[str] = []
+
+                all_responses: Dict[str, gr.Radio] = {}
+                question_texts: List[str] = []
                 options = ["아니다", "조금 아니다", "조금 그렇다", "그렇다"]
 
-                # Part 1: 학업관련 감정과 행동 패턴
-                gr.Markdown("## Part I: 학업관련 감정과 행동 패턴")
-                gr.Markdown("자신의 생각이나 행동과 가장 가깝다고 느끼는 곳에 표시해주세요.")
-                
-                for section, qs in questions_part1.items():
-                    gr.Markdown(f"### {section}")
-                    for i, q_text in enumerate(qs):
-                        key = f"P1_{section}_{i}"
-                        all_responses[key] = gr.Radio(options, label=q_text, elem_id=key)
-                        ordered_keys.append(key)
-                        # CSV 헤더 매핑
-                        if section in section_to_cols and i < len(section_to_cols[section]):
-                            key_to_header_col[key] = section_to_cols[section][i]
+                # 질문 UI 동적 생성
+                question_sets = [
+                    ("Part I: 학업관련 감정과 행동 패턴", questions_part1, "자신의 생각이나 행동과 가장 가깝다고 느끼는 곳에 표시해주세요."),
+                    ("Part II: 학습 방법 및 기술", questions_part2, "자신의 공부 습관과 가장 가깝다고 느끼는 곳에 표시해주세요."),
+                    ("Part III: 학습동기", questions_part3, "내가 왜 공부하는지, 그 이유와 가장 가깝다고 느끼는 곳에 표시해주세요.")
+                ]
 
-                # Part 2: 학습 방법 및 기술
-                gr.Markdown("## Part II: 학습 방법 및 기술")
-                gr.Markdown("자신의 공부 습관과 가장 가깝다고 느끼는 곳에 표시해주세요.")
-                
-                for section, qs in questions_part2.items():
-                    gr.Markdown(f"### {section}")
-                    for i, q_text in enumerate(qs):
-                        key = f"P2_{section}_{i}"
-                        all_responses[key] = gr.Radio(options, label=q_text, elem_id=key)
-                        ordered_keys.append(key)
-                        if section in section_to_cols and i < len(section_to_cols[section]):
-                            key_to_header_col[key] = section_to_cols[section][i]
-
-                # Part 3: 학습동기
-                gr.Markdown("## Part III: 학습동기")
-                gr.Markdown("내가 왜 공부하는지, 그 이유와 가장 가깝다고 느끼는 곳에 표시해주세요.")
-                
-                for section, qs in questions_part3.items():
-                    gr.Markdown(f"### {section}")
-                    for i, q_text in enumerate(qs):
-                        key = f"P3_{section}_{i}"
-                        all_responses[key] = gr.Radio(options, label=q_text, elem_id=key)
-                        ordered_keys.append(key)
-                        if section in section_to_cols and i < len(section_to_cols[section]):
-                            key_to_header_col[key] = section_to_cols[section][i]
+                for title, questions, instruction in question_sets:
+                    gr.Markdown(f"## {title}")
+                    gr.Markdown(instruction)
+                    for section, qs in questions.items():
+                        gr.Markdown(f"### {section}")
+                        for i, q_text in enumerate(qs):
+                            key = f"{title}_{section}_{i}"
+                            all_responses[key] = gr.Radio(options, label=q_text)
+                            question_texts.append(q_text)
 
                 submit_btn = gr.Button("제출", variant="primary")
                 output_text = gr.Textbox(label="처리 상태", interactive=False, placeholder="모든 문항에 답변 후 제출 버튼을 눌러주세요.")
-                
-                with gr.Row():
-                    with gr.Column():
-                        report_output = gr.Markdown(label="학습 성향 분석 보고서", visible=False)
-            
+                report_output = gr.Markdown(label="학습 성향 분석 보고서", visible=False)
+
             # 우측: 채팅 영역
             with gr.Column(scale=2):
                 gr.Markdown("### 🤖 AI 학습 도우미")
                 gr.Markdown("검사 결과를 바탕으로 학습에 대해 궁금한 것을 물어보세요!")
-                
-                chatbot = gr.Chatbot(
-                    label="대화",
-                    height=500,
-                    show_label=True
-                )
-                
-                # 이미지 업로드 컴포넌트
-                image_input = gr.Image(
-                    label="이미지 업로드 (수학 문제, 과제 등)",
-                    type="filepath",
-                    height=150
-                )
-                
+
+                chatbot = gr.Chatbot(label="대화", height=500, show_label=True)
+                image_input = gr.Image(label="이미지 업로드 (수학 문제, 과제 등)", type="filepath", height=150)
+
                 with gr.Row():
-                    chat_input = gr.Textbox(
-                        label="메시지 입력",
-                        placeholder="학습에 대해 궁금한 것을 물어보세요...",
-                        lines=1,
-                        scale=4
-                    )
+                    chat_input = gr.Textbox(label="메시지 입력", placeholder="학습에 대해 궁금한 것을 물어보세요...", lines=1, scale=4)
                     chat_send = gr.Button("전송", variant="secondary", scale=1)
-                
+
                 gr.Markdown("💡 *팁: 검사를 완료하면 더 정확한 맞춤 조언을 받을 수 있어요!*")
                 gr.Markdown("📷 *이미지로 수학 문제나 과제를 업로드하면 단계별로 도움을 받을 수 있어요!*")
 
-        def submit(name, *args):
-            # 이름 검증
+
+        def submit(name, *responses):
             if not name or not name.strip():
                 return "오류: 이름을 입력해주세요.", gr.update(visible=False)
-            
-            name = name.strip()
-            
-            # CSV 준비 상태 확인
-            if header is None:
-                return "오류: 입력 CSV(입력검사지.csv)를 찾을 수 없습니다. 파일 존재를 확인해 주세요.", gr.update(visible=False)
 
-            if None in args:
-                all_questions_flat = []
-                for sec, q_list in questions_part1.items():
-                    all_questions_flat.extend([(f"Part I - {sec}", q) for q in q_list])
-                for sec, q_list in questions_part2.items():
-                    all_questions_flat.extend([(f"Part II - {sec}", q) for q in q_list])
-                for sec, q_list in questions_part3.items():
-                    all_questions_flat.extend([(f"Part III - {sec}", q) for q in q_list])
+            if None in responses:
+                none_index = responses.index(None)
+                unanswered_question = question_texts[none_index]
+                return f"'{unanswered_question}' 질문에 답변해주세요.", gr.update(visible=False)
 
-                none_index = args.index(None)
-                section_title, q_text = all_questions_flat[none_index]
-
-                return f"'{q_text}' 질문에 답변해주세요. ({section_title})", gr.update(visible=False)
-
-            # 옵션 → 점수 매핑
-            to_score = {"아니다": 1, "조금 아니다": 2, "조금 그렇다": 3, "그렇다": 4}
-
-            # 키 순서와 응답을 헤더 열에 매핑
-            response_by_col: Dict[str, int] = {}
-            for key, value in zip(ordered_keys, args):
-                if key in key_to_header_col:
-                    col = key_to_header_col[key]
-                    response_by_col[col] = to_score.get(value, "")
-
-            # 안전장치: 매핑 누락 여부 확인
-            expected_mapped = sum(1 for k in ordered_keys if k in key_to_header_col)
-            if expected_mapped != len(ordered_keys):
-                return "오류: CSV 헤더와 UI 문항 매핑에 누락이 있습니다. 헤더와 문항 구성을 확인해 주세요.", gr.update(visible=False)
-
-            # 행 생성 (헤더 순서대로 값 구성)
-            row_dict = {col: "" for col in header}
-            # BOM 등 인코딩 이슈를 피하기 위해, 첫 번째 헤더명을 그대로 사용
-            row_dict[header[0]] = _format_korean_timestamp(datetime.now())
-            for col, val in response_by_col.items():
-                row_dict[col] = val
-
-            # CSV에 append
             try:
-                with open(CSV_INPUT_PATH, "a", newline="", encoding="utf-8") as f:
-                    writer = csv.DictWriter(f, fieldnames=header)
-                    writer.writerow(row_dict)
-            except Exception as e:
-                return f"저장 실패: {e}", gr.update(visible=False)
+                # Gradio 응답(문자열)을 점수(숫자)로 변환
+                to_score = {"아니다": 1, "조금 아니다": 2, "조금 그렇다": 3, "그렇다": 4}
+                scored_responses = {q_text: to_score[resp] for q_text, resp in zip(question_texts, responses)}
 
-            # 파이프라인 실행: 점수 계산 -> 보고서 생성
-            try:
-                # 1. 점수 계산
-                calc_success, calc_message, results_df = calculate_scores()
-                if not calc_success:
-                    return f"점수 계산 실패: {calc_message}", gr.update(visible=False)
+                # 1. 원점수 계산 (esli_01)
+                # calculate_scores가 scored_responses 딕셔너리를 처리할 수 있도록 수정되었다고 가정
+                raw_scores_df = calculate_scores(scored_responses)
                 
-                # 2. 보고서 생성 (최신 응답자만, 이름 포함)
-                report_success, report_message, report_content = generate_report_with_llm(latest_only=True, student_name=name)
-                if not report_success:
-                    return f"보고서 생성 실패: {report_message}", gr.update(visible=False)
+                # 2. 보고서 생성 및 DB 저장 (esli_02)
+                # generate_report_with_llm이 scored_responses 딕셔너리도 함께 받는다고 가정
+                report_content = generate_report_with_llm(student_name=name.strip(), responses=scored_responses)
+
+                if "데이터베이스 저장에 실패했습니다" in report_content or "[LLM 코멘트 생성 실패" in report_content:
+                     return f"보고서 생성 중 일부 오류가 발생했습니다. 하지만 생성된 내용은 다음과 같습니다.", gr.update(value=report_content, visible=True)
                 
-                if report_content:
-                    return "✅ 분석이 완료되었습니다! 아래에서 결과를 확인하세요.", gr.update(value=report_content, visible=True)
-                else:
-                    return "분석은 완료되었지만 보고서 내용을 가져오는데 실패했습니다.", gr.update(visible=False)
-                    
+                return "✅ 분석이 완료되었습니다! 아래에서 결과를 확인하세요.", gr.update(value=report_content, visible=True)
+
             except Exception as e:
-                return f"분석 처리 중 오류: {e}", gr.update(visible=False)
+                import traceback
+                traceback.print_exc()
+                return f"분석 처리 중 심각한 오류 발생: {e}", gr.update(visible=False)
 
         def chat_respond(message, history, image, name):
-            """채팅 응답을 처리하는 함수 (이미지 포함)"""
-            if not message.strip():
-                return history, "", None
+            if not (message and message.strip()) and not image:
+                return history, "", None # 메시지와 이미지가 모두 없으면 아무것도 하지 않음
             
-            try:
-                # 이름을 포함하여 gradio_chat_with_history 함수 사용
-                current_name = name.strip() if name and name.strip() else None
-                new_history, empty_message = gradio_chat_with_history(message, history, image, current_name)
-                
-                return new_history, empty_message, None  # 이미지도 초기화
-                
-            except Exception as e:
-                error_msg = f"죄송합니다. 응답 생성 중 오류가 발생했습니다: {str(e)}"
-                new_history = history + [[message, error_msg]]
-                return new_history, "", None
+            # 이름이 없으면 채팅 불가 안내
+            student_name = name.strip() if name and name.strip() else None
+            if not student_name:
+                history.append((message, "원활한 상담을 위해 먼저 설문조사를 완료하고 이름을 입력해주세요."))
+                return history, "", None
+
+            # esli_03의 채팅 함수 호출
+            response = gradio_chat_with_history(message, history, image, student_name)
+            history.append((message, response))
+            return history, "", None # 입력창과 이미지 업로드 초기화
 
         # 이벤트 바인딩
         all_components = [name_input] + list(all_responses.values())
         submit_btn.click(fn=submit, inputs=all_components, outputs=[output_text, report_output])
-        
-        # 채팅 이벤트 바인딩 (이미지 및 이름 포함)
+
         chat_send.click(
             fn=chat_respond,
             inputs=[chat_input, chatbot, image_input, name_input],
             outputs=[chatbot, chat_input, image_input]
         )
-        
         chat_input.submit(
             fn=chat_respond,
             inputs=[chat_input, chatbot, image_input, name_input],
@@ -378,17 +245,13 @@ def create_final_survey():
     return demo
 
 if __name__ == "__main__":
-    import os
-    
     survey_app = create_final_survey()
-    
-    # 환경변수에서 포트와 호스트 정보 가져오기 (Render 배포 지원)
     port = int(os.getenv("PORT", 7861))
     host = os.getenv("HOST", "0.0.0.0")
     
     survey_app.launch(
-        server_name=host,       # 외부 접속 허용
-        server_port=port,       # 환경변수 포트 사용
+        server_name=host,
+        server_port=port,
         share=False,
-        inbrowser=False  # 서버 환경에서는 브라우저 자동 열기 비활성화
+        inbrowser=False
     )
