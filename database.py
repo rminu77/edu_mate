@@ -141,31 +141,20 @@ def seed_reference_data():
             calc = get_calculations_definitions()
             # 기존 패턴 로드
             existing = {row.pattern: row for row in session.query(ReferenceQuestionMap).all()}
-            motivation_map = {
-                '직접적': '직접적 보상처벌', '관계적': '사회적 관계', '자기성취': '자기성취',
-            }
-            alias_to_std = {
-                '목표': '목표세우기', '계획': '계획하기', '실천': '실천하기', '돌아보기': '돌아보기',
-                '이해하기': '이해하기', '사고하기': '사고하기', '정리하기': '정리하기', '암기하기': '암기하기', '문제풀기': '문제풀기',
-                '스트레스': '스트레스민감성', '효능감': '학습효능감', '친구': '친구관계', '가정': '가정환경', '학교': '학교환경',
-                '수면': '수면조절', '집중력': '학습집중력', 'TV': 'TV프로그램', '컴퓨터': '컴퓨터', '스마트': '스마트기기'
-            }
             upserted = 0
             for key, cfg in calc.items():
                 cols = cfg.get('cols', [])
-                std_name = motivation_map.get(key)
-                if std_name is None:
-                    std_name = alias_to_std.get(key, key)
+                # 이제 모든 키가 표준 항목명이므로 직접 사용
+                std_name = key
                 for question in cols:
                     q = str(question)
-                    target = std_name
                     if q in existing:
                         row = existing[q]
-                        if row.standard_name != target:
-                            row.standard_name = target
+                        if row.standard_name != std_name:
+                            row.standard_name = std_name
                             upserted += 1
                     else:
-                        session.add(ReferenceQuestionMap(pattern=q, standard_name=target))
+                        session.add(ReferenceQuestionMap(pattern=q, standard_name=std_name))
                         upserted += 1
             if upserted:
                 session.commit()

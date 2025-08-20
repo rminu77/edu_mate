@@ -110,13 +110,15 @@ def generate_report_with_llm(student_name: str, responses: dict):
         finally:
             session.close()
 
+        # 이제 모든 키가 표준 항목명으로 통일되었으므로 COLUMN_MAP은 단순화
         COLUMN_MAP = {
-            '직접적': '직접적 보상처벌', '관계적': '사회적 관계', '자기성취': '자기성취',
-            '스트레스': '스트레스민감성', '효능감': '학습효능감', '친구': '친구관계',
-            '가정': '가정환경', '학교': '학교환경', '수면': '수면조절',
-            '집중력': '학습집중력', 'TV': 'TV프로그램', '컴퓨터': '컴퓨터',
-            '스마트': '스마트기기', '학습전략': '학습전략', '학습기술': '학습기술',
-            '목표': '목표세우기', '계획': '계획하기', '실천': '실천하기',
+            '사회적바람직성': '사회적바람직성',
+            '직접적 보상처벌': '직접적 보상처벌', '사회적 관계': '사회적 관계', '자기성취': '자기성취',
+            '스트레스민감성': '스트레스민감성', '학습효능감': '학습효능감', '친구관계': '친구관계',
+            '가정환경': '가정환경', '학교환경': '학교환경', '수면조절': '수면조절',
+            '학습집중력': '학습집중력', 'TV프로그램': 'TV프로그램', '컴퓨터': '컴퓨터',
+            '스마트기기': '스마트기기', '학습전략': '학습전략', '학습기술': '학습기술',
+            '목표세우기': '목표세우기', '계획하기': '계획하기', '실천하기': '실천하기',
             '돌아보기': '돌아보기', '이해하기': '이해하기', '사고하기': '사고하기',
             '정리하기': '정리하기', '암기하기': '암기하기', '문제풀기': '문제풀기',
         }
@@ -264,15 +266,20 @@ def generate_report_with_llm(student_name: str, responses: dict):
 
         # 2-2. 학습 전략/기술 프롬프트
         s_analysis, s_coaching_title = get_strategy_analysis(student_scores)
+        def t(item: str) -> int:
+            try:
+                return int(student_scores[item]['t_score'])
+            except Exception:
+                return 100
         strategy_prompt = f"""
         '학습 전략/기술'에 대한 분석 및 코칭 코멘트를 작성해줘.
 
         [학생 데이터 요약]
         - 종합 분석: {s_analysis}
-        - 학습 전략 종합 점수: T점수 {student_scores['학습전략']['t_score']} (백분위 {student_scores['학습전략']['percentile']}%)
-        - 학습 기술 종합 점수: T점수 {student_scores['학습기술']['t_score']} (백분위 {student_scores['학습기술']['percentile']}%)
-        - 강점 항목: 사고하기 (T={student_scores['사고하기']['t_score']})
-        - 약점 항목: 목표세우기 (T={student_scores['목표세우기']['t_score']}), 이해하기 (T={student_scores['이해하기']['t_score']}), 문제풀기 (T={student_scores['문제풀기']['t_score']})
+        - 학습 전략 종합 점수: T점수 {t('학습전략')} (백분위 {student_scores.get('학습전략', {}).get('percentile', 50)}%)
+        - 학습 기술 종합 점수: T점수 {t('학습기술')} (백분위 {student_scores.get('학습기술', {}).get('percentile', 50)}%)
+        - 강점 항목: 사고하기 (T={t('사고하기')})
+        - 약점 항목: 목표세우기 (T={t('목표세우기')}), 이해하기 (T={t('이해하기')}), 문제풀기 (T={t('문제풀기')})
 
         [참고 가이드라인]
         - 핵심 특징: {s_analysis}
