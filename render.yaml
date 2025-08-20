@@ -2,7 +2,7 @@ services:
   - type: web
     name: edu-mate
     env: python
-    buildCommand: "pip install -r requirements.txt && python database.py"
+    buildCommand: "pip install -r requirements.txt && python database.py && python -c \"import database; database.seed_reference_data()\""
     startCommand: "python esli_00.py"
     envVars:
       - key: OPENAI_API_KEY
@@ -12,7 +12,7 @@ services:
           name: edu-mate-db
           property: connectionString
       - key: PYTHON_VERSION
-        value: 3.11.0
+        value: 3.11.9
       - key: PORT
         value: 7861
       - key: HOST
