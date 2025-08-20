@@ -13,8 +13,12 @@ import io
 from sqlalchemy.orm import Session
 from database import SessionLocal, LLMLog, SurveyResponse
 
+# OpenAI v1 클라이언트
+from openai import OpenAI
+
 load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")
+client = OpenAI()
 
 # --- 설정 ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -142,7 +146,7 @@ def get_ai_response(user_message: str, history: list, image_path: str = None, st
         # --- LLM 호출 및 로깅 ---
         try:
             log_llm_interaction_db(db, "chat_input", {"messages": messages}, "")
-            response = openai.chat.completions.create(
+            response = client.chat.completions.create(
                 model="gpt-4o",
                 messages=messages,
                 temperature=0.7,
