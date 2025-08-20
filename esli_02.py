@@ -14,6 +14,7 @@ from database import (
     init_db,
     seed_reference_data,
     ReferenceQuestionMap,
+    ReferenceQuestionUnmapped,
 )
 
 load_dotenv()
@@ -144,7 +145,24 @@ def generate_report_with_llm(student_name: str, responses: dict):
             for pattern, name in pattern_to_name:
                 if pattern in q:
                     buckets.setdefault(name, []).append(val)
+                    hit = True
                     break
+            # 미매핑 저장
+            if not hit:
+                try:
+                    um_sess = SessionLocal()
+                    try:
+                        row = um_sess.query(ReferenceQuestionUnmapped).filter_by(question_text=q).first()
+                        if row:
+                            row.count = (row.count or 0) + 1
+                            row.last_seen = datetime.now()
+                        else:
+                            um_sess.add(ReferenceQuestionUnmapped(question_text=q))
+                        um_sess.commit()
+                    finally:
+                        um_sess.close()
+                except Exception:
+                    pass
         for name, vals in buckets.items():
             if len(vals) > 0:
                 student_raw_scores[name] = float(sum(vals)) / len(vals) * 25  # 1~4척도 → 100점 환산 근사
@@ -171,8 +189,14 @@ def generate_report_with_llm(student_name: str, responses: dict):
                         'percentile': int(percentile) if percentile != "N/A" else 0
                     }
 
-        # 필수 동기 항목이 누락되면 평균 기반 기본값 보정(보고서 생성 중 KeyError 방지)
-        for required in ['자기성취', '사회적 관계', '직접적 보상처벌']:
+        # 필수 항목 기본값 보정(동기 3종 + 전략/기술 구성요소 + 전략/기술 종합)
+        required_list = [
+            '자기성취', '사회적 관계', '직접적 보상처벌',
+            '목표세우기', '계획하기', '실천하기', '돌아보기',
+            '이해하기', '사고하기', '정리하기', '암기하기', '문제풀기',
+            '학습전략', '학습기술',
+        ]
+        for required in required_list:
             if required not in student_scores and required in std_info_df.index:
                 mean = std_info_df.loc[required, '평균']
                 # 평균을 원점수로 간주하면 T=100이 되므로 백분위는 표에서 100이 없으면 50으로 처리

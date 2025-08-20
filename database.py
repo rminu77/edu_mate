@@ -52,6 +52,14 @@ class ReferenceQuestionMap(Base):
     pattern = Column(String, index=True, nullable=False)        # 질문 텍스트에 포함될 키워드/패턴
     standard_name = Column(String, index=True, nullable=False)  # 표준 항목명(예: 사회적 관계)
 
+# 미매핑 질문 수집 테이블
+class ReferenceQuestionUnmapped(Base):
+    __tablename__ = "reference_question_unmapped"
+    id = Column(Integer, primary_key=True, index=True)
+    question_text = Column(String, unique=True, nullable=False)
+    count = Column(Integer, default=1)
+    last_seen = Column(DateTime, default=datetime.now)
+
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -128,39 +136,45 @@ def seed_reference_data():
             else:
                 print(f"파일 없음(백분위점수): {pct_path}")
 
-        # 질문→항목 매핑 시드 (정확 문항 텍스트 전수 입력)
-        if not has_qmap:
-            try:
-                calc = get_calculations_definitions()
-                # 동기 세부항목 → 표준명 매핑 정의
-                motivation_map = {
-                    '직접적': '직접적 보상처벌',
-                    '관계적': '사회적 관계',
-                    '자기성취': '자기성취',
-                }
-                for key, cfg in calc.items():
-                    cols = cfg.get('cols', [])
-                    # 전략/기술/방해 등은 표준명과 동일(혹은 동일 계열)
-                    std_name = motivation_map.get(key, None)
-                    if std_name is None:
-                        # 키가 곧 표준명인 경우(예: 목표/계획/…/스트레스/…)
-                        std_name = key if key not in ['직접적', '관계적', '자기성취'] else None
-                    for question in cols:
-                        target = std_name
-                        # 동기 세부항목은 상단 매핑 사용, 그 외는 키 자체를 표준명으로 사용
-                        if target is None:
-                            target = {
-                                '목표': '목표세우기', '계획': '계획하기', '실천': '실천하기', '돌아보기': '돌아보기',
-                                '이해하기': '이해하기', '사고하기': '사고하기', '정리하기': '정리하기', '암기하기': '암기하기', '문제풀기': '문제풀기',
-                                '스트레스': '스트레스민감성', '효능감': '학습효능감', '친구': '친구관계', '가정': '가정환경', '학교': '학교환경',
-                                '수면': '수면조절', '집중력': '학습집중력', 'TV': 'TV프로그램', '컴퓨터': '컴퓨터', '스마트': '스마트기기'
-                            }.get(key, key)
-                        session.add(ReferenceQuestionMap(pattern=str(question), standard_name=target))
+        # 질문→항목 매핑 시드 (정확 문항 텍스트 전수 입력, 항상 보정 수행)
+        try:
+            calc = get_calculations_definitions()
+            # 기존 패턴 로드
+            existing = {row.pattern: row for row in session.query(ReferenceQuestionMap).all()}
+            motivation_map = {
+                '직접적': '직접적 보상처벌', '관계적': '사회적 관계', '자기성취': '자기성취',
+            }
+            alias_to_std = {
+                '목표': '목표세우기', '계획': '계획하기', '실천': '실천하기', '돌아보기': '돌아보기',
+                '이해하기': '이해하기', '사고하기': '사고하기', '정리하기': '정리하기', '암기하기': '암기하기', '문제풀기': '문제풀기',
+                '스트레스': '스트레스민감성', '효능감': '학습효능감', '친구': '친구관계', '가정': '가정환경', '학교': '학교환경',
+                '수면': '수면조절', '집중력': '학습집중력', 'TV': 'TV프로그램', '컴퓨터': '컴퓨터', '스마트': '스마트기기'
+            }
+            upserted = 0
+            for key, cfg in calc.items():
+                cols = cfg.get('cols', [])
+                std_name = motivation_map.get(key)
+                if std_name is None:
+                    std_name = alias_to_std.get(key, key)
+                for question in cols:
+                    q = str(question)
+                    target = std_name
+                    if q in existing:
+                        row = existing[q]
+                        if row.standard_name != target:
+                            row.standard_name = target
+                            upserted += 1
+                    else:
+                        session.add(ReferenceQuestionMap(pattern=q, standard_name=target))
+                        upserted += 1
+            if upserted:
                 session.commit()
-                print("질문→항목 전수 매핑 시드 완료")
-            except Exception as e:
-                session.rollback()
-                print(f"질문 전수 매핑 시드 중 오류: {e}")
+                print(f"질문→항목 전수 매핑 보정 완료(upsert): {upserted}건")
+            else:
+                print("질문→항목 전수 매핑 보정 사항 없음")
+        except Exception as e:
+            session.rollback()
+            print(f"질문 전수 매핑 보정 중 오류: {e}")
     finally:
         session.close()
 
