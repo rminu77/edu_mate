@@ -305,12 +305,11 @@ def generate_report_with_llm(student_name: str, responses: dict):
         - 주요 동기 유형: {m_type}
         - 학습 전략/기술 분석: {s_analysis}
         - 학습 방해 요인 분석: {h_analysis}
-        - {score_table_md}
+        - 구체적인 점수나 수치는 언급하지 말고, 전반적인 경향성만 설명해줘 : {score_table_md}
 
         
         [작성 지침]
-        - 구체적인 점수나 수치는 언급하지 말고, 전반적인 경향성만 설명해줘.
-        - 학생의 학습 성향을 3-4문장으로 간결하게 요약해줘.
+        - 학생의 학습 성향을 10문장내로 간결하게 요약해줘.
         - 학생의 강점과 개선이 필요한 부분을 균형있게 언급해줘.
         - 따뜻하고 격려적인 톤으로 작성해줘.
         
@@ -337,7 +336,7 @@ def generate_report_with_llm(student_name: str, responses: dict):
                     score_table_md += f"| **{group.split(' ')[0]}** | {item_name} | {score_data['raw']} | {score_data['t_score']} | {score_data['percentile']} |\n"
 
         # 최종 보고서 텍스트
-        report_md = f"""# {student_name} 학생 학습 성향 분석 종합 보고서 (LLM 기반)
+        report_md = f"""# {student_name} 학생 학습 성향 분석 종합 보고서
 
         ---
 
