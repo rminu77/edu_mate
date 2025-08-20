@@ -175,6 +175,27 @@ def generate_report_with_llm(student_name: str, responses: dict):
                     'percentile': int(percentile)
                 }
 
+        # 복합 지표(학습전략/학습기술) 보정: 구성 항목 평균으로 raw 근사 후 표준점수 계산
+        def ensure_composite(composite_name: str, part_names: list[str]):
+            if composite_name in student_scores:
+                return
+            available = [student_scores[p]['raw'] for p in part_names if p in student_scores]
+            if len(available) == 0 or composite_name not in std_info_df.index:
+                return
+            raw_approx = float(sum(available)) / len(available)
+            mean = std_info_df.loc[composite_name, '평균']
+            std = std_info_df.loc[composite_name, '표준편차']
+            t_score = round(100 + 15 * ((raw_approx - mean) / std))
+            percentile = percentile_df.loc[t_score, '백분위'] if t_score in percentile_df.index else 50
+            student_scores[composite_name] = {
+                'raw': raw_approx,
+                't_score': t_score,
+                'percentile': int(percentile)
+            }
+
+        ensure_composite('학습전략', ['목표세우기', '계획하기', '실천하기', '돌아보기'])
+        ensure_composite('학습기술', ['이해하기', '사고하기', '정리하기', '암기하기', '문제풀기'])
+
         # --- 2. 보고서 각 섹션별 LLM 프롬프트 생성 및 호출 (기존 코드와 동일) ---
         m_type, _, m_reason, m_coaching = get_motivation_analysis(student_scores)
         motivation_prompt = f"""
@@ -226,7 +247,7 @@ def generate_report_with_llm(student_name: str, responses: dict):
 
         [작성 지침]
         - 강점(사고력)을 인정해주고, 약점(전략)을 보완하면 더 크게 성장할 수 있다는 점을 강조해줘.
-        - '버킷리스트', '만다라트 계획표' 등 구체적인 활동 예시를 들어 조언해줘.
+        - 구체적인 활동 예시를 들어 조언해줘.
         - 아래 출력 형식을 반드시 지켜줘.
 
         [출력 형식]
