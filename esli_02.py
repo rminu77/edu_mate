@@ -13,6 +13,7 @@ from database import (
     ReferencePercentile,
     init_db,
     seed_reference_data,
+    ReferenceQuestionMap,
 )
 
 load_dotenv()
@@ -119,25 +120,22 @@ def generate_report_with_llm(student_name: str, responses: dict):
             '정리하기': '정리하기', '암기하기': '암기하기', '문제풀기': '문제풀기',
         }
 
-        # 전달받은 responses로부터 항목별 원점수 집계
-        # responses: {질문텍스트: 1~4}
-        # 간단히 항목명의 키워드를 포함하는 질문들을 평균하여 원점수 근사
-        # 실제 설문-항목 매핑은 esli_01.py 개선 후 교체
+        # 전달받은 responses로부터 항목별 원점수 집계 (DB의 질문→항목 매핑 사용)
         student_raw_scores = {}
-        keyword_to_name = {
-            "목표": "목표세우기", "계획": "계획하기", "실천": "실천하기", "돌아보": "돌아보기",
-            "이해": "이해하기", "사고": "사고하기", "정리": "정리하기", "암기": "암기하기", "문제": "문제풀기",
-            "스트레스": "스트레스민감성", "효능": "학습효능감", "친구": "친구관계", "가정": "가정환경",
-            "학교": "학교환경", "수면": "수면조절", "집중": "학습집중력", "TV": "TV프로그램",
-            "컴퓨터": "컴퓨터", "스마트": "스마트기기",
-            # 동기 요인 근사
-            "보상": "직접적 보상처벌", "관계": "사회적 관계", "성취": "자기성취"
-        }
+        qmap_session = SessionLocal()
+        try:
+            maps = qmap_session.query(ReferenceQuestionMap).all()
+            pattern_to_name = [(m.pattern, m.standard_name) for m in maps]
+        finally:
+            qmap_session.close()
         buckets = {}
         for q, val in responses.items():
-            for kw, name in keyword_to_name.items():
-                if kw in q:
+            matched = False
+            for pattern, name in pattern_to_name:
+                if pattern in q:
                     buckets.setdefault(name, []).append(val)
+                    matched = True
+            # 매핑 안 된 질문은 버림(추후 매핑 확대 시 자동 반영)
         for name, vals in buckets.items():
             if len(vals) > 0:
                 student_raw_scores[name] = float(sum(vals)) / len(vals) * 25  # 1~4척도 → 100점 환산 근사

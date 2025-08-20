@@ -44,6 +44,13 @@ class ReferencePercentile(Base):
     t_score = Column(Integer, index=True, nullable=False)
     percentile = Column(Integer, nullable=False)
 
+# 질문 → 항목 매핑 (패턴 기반)
+class ReferenceQuestionMap(Base):
+    __tablename__ = "reference_question_map"
+    id = Column(Integer, primary_key=True, index=True)
+    pattern = Column(String, index=True, nullable=False)        # 질문 텍스트에 포함될 키워드/패턴
+    standard_name = Column(String, index=True, nullable=False)  # 표준 항목명(예: 사회적 관계)
+
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -68,6 +75,7 @@ def seed_reference_data():
         # 이미 시드되었는지 확인
         has_std = session.query(ReferenceStandard).first() is not None
         has_pct = session.query(ReferencePercentile).first() is not None
+        has_qmap = session.query(ReferenceQuestionMap).first() is not None
 
         base_dir = os.path.dirname(os.path.abspath(__file__))
         refer_dir = os.path.join(base_dir, "refer")
@@ -118,6 +126,28 @@ def seed_reference_data():
                     print(f"백분위점수 시드 중 오류: {e}")
             else:
                 print(f"파일 없음(백분위점수): {pct_path}")
+
+        # 기본 질문→항목 매핑 시드 (패턴 기반, 필요시 대시보드/SQL로 가감)
+        if not has_qmap:
+            default_map = {
+                # 전략/기술
+                "목표": "목표세우기", "계획": "계획하기", "실천": "실천하기", "돌아보": "돌아보기",
+                "이해": "이해하기", "사고": "사고하기", "정리": "정리하기", "암기": "암기하기", "문제": "문제풀기",
+                # 방해
+                "스트레스": "스트레스민감성", "효능": "학습효능감", "친구": "친구관계", "가정": "가정환경",
+                "학교": "학교환경", "수면": "수면조절", "집중": "학습집중력", "TV": "TV프로그램",
+                "컴퓨터": "컴퓨터", "스마트": "스마트기기",
+                # 동기
+                "보상": "직접적 보상처벌", "관계": "사회적 관계", "성취": "자기성취",
+            }
+            try:
+                for pattern, name in default_map.items():
+                    session.add(ReferenceQuestionMap(pattern=pattern, standard_name=name))
+                session.commit()
+                print("질문→항목 매핑 시드 완료")
+            except Exception as e:
+                session.rollback()
+                print(f"질문 매핑 시드 중 오류: {e}")
     finally:
         session.close()
 
