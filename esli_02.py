@@ -124,18 +124,27 @@ def generate_report_with_llm(student_name: str, responses: dict):
         student_raw_scores = {}
         qmap_session = SessionLocal()
         try:
-            maps = qmap_session.query(ReferenceQuestionMap).all()
-            pattern_to_name = [(m.pattern, m.standard_name) for m in maps]
+            # 전수 매핑(정확 문항 텍스트)이 우선
+            exact_maps = qmap_session.query(ReferenceQuestionMap).all()
+            pattern_to_name = [(m.pattern, m.standard_name) for m in exact_maps]
         finally:
             qmap_session.close()
         buckets = {}
         for q, val in responses.items():
-            matched = False
+            # 정확 일치 우선
+            hit = False
+            for pattern, name in pattern_to_name:
+                if q == pattern:
+                    buckets.setdefault(name, []).append(val)
+                    hit = True
+                    break
+            if hit:
+                continue
+            # 안전장치: 포함 패턴 fallback (예외적으로)
             for pattern, name in pattern_to_name:
                 if pattern in q:
                     buckets.setdefault(name, []).append(val)
-                    matched = True
-            # 매핑 안 된 질문은 버림(추후 매핑 확대 시 자동 반영)
+                    break
         for name, vals in buckets.items():
             if len(vals) > 0:
                 student_raw_scores[name] = float(sum(vals)) / len(vals) * 25  # 1~4척도 → 100점 환산 근사

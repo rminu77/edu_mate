@@ -3,6 +3,7 @@ from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, J
 from sqlalchemy.orm import sessionmaker, declarative_base
 from datetime import datetime
 from dotenv import load_dotenv
+from esli_01 import get_calculations_definitions
 import pandas as pd
 
 load_dotenv()
@@ -127,27 +128,39 @@ def seed_reference_data():
             else:
                 print(f"파일 없음(백분위점수): {pct_path}")
 
-        # 기본 질문→항목 매핑 시드 (패턴 기반, 필요시 대시보드/SQL로 가감)
+        # 질문→항목 매핑 시드 (정확 문항 텍스트 전수 입력)
         if not has_qmap:
-            default_map = {
-                # 전략/기술
-                "목표": "목표세우기", "계획": "계획하기", "실천": "실천하기", "돌아보": "돌아보기",
-                "이해": "이해하기", "사고": "사고하기", "정리": "정리하기", "암기": "암기하기", "문제": "문제풀기",
-                # 방해
-                "스트레스": "스트레스민감성", "효능": "학습효능감", "친구": "친구관계", "가정": "가정환경",
-                "학교": "학교환경", "수면": "수면조절", "집중": "학습집중력", "TV": "TV프로그램",
-                "컴퓨터": "컴퓨터", "스마트": "스마트기기",
-                # 동기
-                "보상": "직접적 보상처벌", "관계": "사회적 관계", "성취": "자기성취",
-            }
             try:
-                for pattern, name in default_map.items():
-                    session.add(ReferenceQuestionMap(pattern=pattern, standard_name=name))
+                calc = get_calculations_definitions()
+                # 동기 세부항목 → 표준명 매핑 정의
+                motivation_map = {
+                    '직접적': '직접적 보상처벌',
+                    '관계적': '사회적 관계',
+                    '자기성취': '자기성취',
+                }
+                for key, cfg in calc.items():
+                    cols = cfg.get('cols', [])
+                    # 전략/기술/방해 등은 표준명과 동일(혹은 동일 계열)
+                    std_name = motivation_map.get(key, None)
+                    if std_name is None:
+                        # 키가 곧 표준명인 경우(예: 목표/계획/…/스트레스/…)
+                        std_name = key if key not in ['직접적', '관계적', '자기성취'] else None
+                    for question in cols:
+                        target = std_name
+                        # 동기 세부항목은 상단 매핑 사용, 그 외는 키 자체를 표준명으로 사용
+                        if target is None:
+                            target = {
+                                '목표': '목표세우기', '계획': '계획하기', '실천': '실천하기', '돌아보기': '돌아보기',
+                                '이해하기': '이해하기', '사고하기': '사고하기', '정리하기': '정리하기', '암기하기': '암기하기', '문제풀기': '문제풀기',
+                                '스트레스': '스트레스민감성', '효능감': '학습효능감', '친구': '친구관계', '가정': '가정환경', '학교': '학교환경',
+                                '수면': '수면조절', '집중력': '학습집중력', 'TV': 'TV프로그램', '컴퓨터': '컴퓨터', '스마트': '스마트기기'
+                            }.get(key, key)
+                        session.add(ReferenceQuestionMap(pattern=str(question), standard_name=target))
                 session.commit()
-                print("질문→항목 매핑 시드 완료")
+                print("질문→항목 전수 매핑 시드 완료")
             except Exception as e:
                 session.rollback()
-                print(f"질문 매핑 시드 중 오류: {e}")
+                print(f"질문 전수 매핑 시드 중 오류: {e}")
     finally:
         session.close()
 
