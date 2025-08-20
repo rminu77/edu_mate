@@ -6,7 +6,14 @@ from dotenv import load_dotenv
 import json
 
 # 데이터베이스 연동을 위한 import
-from database import SessionLocal, SurveyResponse, ReferenceStandard, ReferencePercentile
+from database import (
+    SessionLocal,
+    SurveyResponse,
+    ReferenceStandard,
+    ReferencePercentile,
+    init_db,
+    seed_reference_data,
+)
 
 load_dotenv()
 # 환경 변수에서 OpenAI API 키를 읽어옵니다
@@ -80,6 +87,12 @@ def generate_report_with_llm(student_name: str, responses: dict):
         # CSV 파일 로드 대신, Gradio 앱에서 직접 받은 responses 딕셔너리를 사용합니다.
         # 참조값은 DB에서 조회 (기본: 초등 기준)
         ref_level = os.getenv("REF_LEVEL", "초등")
+        # 테이블/시드 보장 (배포 환경에서 테이블 미생성 대비)
+        try:
+            init_db()
+            seed_reference_data()
+        except Exception:
+            pass
         session = SessionLocal()
         try:
             std_rows = session.query(ReferenceStandard).filter(ReferenceStandard.level == ref_level).all()
