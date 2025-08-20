@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 import json
 
 # 데이터베이스 연동을 위한 import
-from database import SessionLocal, SurveyResponse
+from database import SessionLocal, SurveyResponse, ReferenceStandard, ReferencePercentile
 
 load_dotenv()
 # 환경 변수에서 OpenAI API 키를 읽어옵니다
@@ -56,7 +56,7 @@ def call_llm_for_report(prompt):
 
     try:
         response = openai.chat.completions.create(
-            model="gpt-4-turbo",  # 또는 "gpt-3.5-turbo"
+            model="gpt-4o",  # 또는 "gpt-3.5-turbo"
             messages=[
                 {"role": "system", "content": "당신은 학생의 학습 성향 데이터를 분석하고 조언하는 전문 학습 코치입니다. 주어진 데이터를 기반으로, 학생에게 친절하고 지지적이지만, 전문적인 말투를 사용해 독창적인 보고서를 작성해 주세요. 딱딱한 설명서가 아닌, 학생의 성장을 돕는 따뜻한 조언의 느낌을 담아주세요."},
                 {"role": "user", "content": prompt}
@@ -78,12 +78,22 @@ def generate_report_with_llm(student_name: str, responses: dict):
     try:
         # --- 1. 데이터 로드 및 계산 ---
         # CSV 파일 로드 대신, Gradio 앱에서 직접 받은 responses 딕셔너리를 사용합니다.
-        # std_info_df와 percentile_df는 계속 파일에서 로드합니다.
+        # 참조값은 DB에서 조회 (기본: 초등 기준)
+        ref_level = os.getenv("REF_LEVEL", "초등")
+        session = SessionLocal()
         try:
-            std_info_df = pd.read_csv('/Users/mason/Documents/학습성향검사/refer/표준점수 - 초등.csv', index_col=0)
-            percentile_df = pd.read_csv('/Users/mason/Documents/학습성향검사/refer/백분위점수.csv').set_index('표준점수')
-        except FileNotFoundError as e:
-            return f"오류: {e.filename} 파일을 찾을 수 없습니다. 파일 경로를 확인해주세요."
+            std_rows = session.query(ReferenceStandard).filter(ReferenceStandard.level == ref_level).all()
+            if not std_rows:
+                return f"오류: 기준표(표준점수-{ref_level})가 DB에 없습니다. database.py의 seed_reference_data를 실행하세요."
+            std_info_df = pd.DataFrame(
+                {"평균": {r.name: r.mean for r in std_rows}, "표준편차": {r.name: r.std for r in std_rows}}
+            )
+            pct_rows = session.query(ReferencePercentile).all()
+            percentile_df = pd.DataFrame(
+                {"표준점수": [r.t_score for r in pct_rows], "백분위": [r.percentile for r in pct_rows]}
+            ).set_index("표준점수")
+        finally:
+            session.close()
 
         COLUMN_MAP = {
             '직접적': '직접적 보상처벌', '관계적': '사회적 관계', '자기성취': '자기성취',
@@ -96,15 +106,28 @@ def generate_report_with_llm(student_name: str, responses: dict):
             '정리하기': '정리하기', '암기하기': '암기하기', '문제풀기': '문제풀기',
         }
 
-        # '결과.csv'를 읽는 대신, 전달받은 responses 딕셔너리에서 직접 원점수를 계산합니다.
-        raw_scores = {}
-        # responses 딕셔너리의 key가 '문항1', '문항2' ... 형태라고 가정합니다.
-        # 실제 key에 맞게 이 부분을 조정해야 할 수 있습니다.
-        # 예시: responses['문항1'] -> 1~5점
-        # 이 부분은 esli_01.py의 점수 계산 로직을 참고하여 구현해야 합니다.
-        # 우선, 임시로 raw_score_df를 계속 사용하고, 추후 이 부분을 수정하겠습니다.
-        raw_score_df = pd.read_csv('/Users/mason/Documents/학습성향검사/csv/결과.csv') # TODO: 이 부분을 responses 기반으로 변경
-        student_raw_scores = raw_score_df.iloc[0]
+        # 전달받은 responses로부터 항목별 원점수 집계
+        # responses: {질문텍스트: 1~4}
+        # 간단히 항목명의 키워드를 포함하는 질문들을 평균하여 원점수 근사
+        # 실제 설문-항목 매핑은 esli_01.py 개선 후 교체
+        student_raw_scores = {}
+        keyword_to_name = {
+            "목표": "목표세우기", "계획": "계획하기", "실천": "실천하기", "돌아보": "돌아보기",
+            "이해": "이해하기", "사고": "사고하기", "정리": "정리하기", "암기": "암기하기", "문제": "문제풀기",
+            "스트레스": "스트레스민감성", "효능": "학습효능감", "친구": "친구관계", "가정": "가정환경",
+            "학교": "학교환경", "수면": "수면조절", "집중": "학습집중력", "TV": "TV프로그램",
+            "컴퓨터": "컴퓨터", "스마트": "스마트기기",
+            # 동기 요인 근사
+            "보상": "직접적 보상처벌", "관계": "사회적 관계", "성취": "자기성취"
+        }
+        buckets = {}
+        for q, val in responses.items():
+            for kw, name in keyword_to_name.items():
+                if kw in q:
+                    buckets.setdefault(name, []).append(val)
+        for name, vals in buckets.items():
+            if len(vals) > 0:
+                student_raw_scores[name] = float(sum(vals)) / len(vals) * 25  # 1~4척도 → 100점 환산 근사
 
 
         student_scores = {}
