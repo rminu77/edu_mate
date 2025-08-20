@@ -2,8 +2,8 @@ services:
   - type: web
     name: edu-mate
     env: python
-    buildCommand: "pip install -r requirements.txt && python database.py && python -c \"import database; database.seed_reference_data()\""
-    startCommand: "python esli_00.py"
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python -c \"import database; database.init_db(); database.seed_reference_data()\" && python esli_00.py"
     envVars:
       - key: OPENAI_API_KEY
         sync: false
