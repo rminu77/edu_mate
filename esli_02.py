@@ -333,6 +333,28 @@ def generate_report_with_llm(student_name: str, responses: dict):
         """
         hindrance_comment = call_llm_for_report(hindrance_prompt)
 
+        # 2-4. 종합 요약 프롬프트 (전반적인 경향성만 설명)
+        summary_prompt = f"""
+        학생의 전반적인 학습 성향을 종합하여 간결한 요약문을 작성해줘.
+        
+        [학생 데이터 요약]
+        - 학생 이름: {student_name}
+        - 주요 동기 유형: {m_type}
+        - 학습 전략/기술 분석: {s_analysis}
+        - 학습 방해 요인 분석: {h_analysis}
+        - {score_table_md}
+
+        
+        [작성 지침]
+        - 구체적인 점수나 수치는 언급하지 말고, 전반적인 경향성만 설명해줘.
+        - 학생의 학습 성향을 3-4문장으로 간결하게 요약해줘.
+        - 학생의 강점과 개선이 필요한 부분을 균형있게 언급해줘.
+        - 따뜻하고 격려적인 톤으로 작성해줘.
+        
+        [출력 형식]
+        학생의 학습 성향을 간결하게 요약한 8-10문장의 문단 (제목이나 서식 없이 본문만)
+        """
+        summary_comment = call_llm_for_report(summary_prompt)
 
         # --- 3. 최종 보고서 조합 ---
         score_table_md = "| 구분 | 영역 | 원점수 | 표준점수(T) | 백분위(%) |\n"
@@ -358,9 +380,8 @@ def generate_report_with_llm(student_name: str, responses: dict):
 
         ## Ⅰ. 검사 결과 요약
 
-        학생의 원점수를 전국 학생 데이터와 비교한 표준점수(T점수)와 백분위 점수입니다. 이를 통해 각 항목의 상대적인 강점과 약점을 객관적으로 파악할 수 있습니다.
+        {summary_comment}
 
-        {score_table_md}
         ---
 
         ## Ⅱ. 학습 성향 종합 분석 및 코칭
