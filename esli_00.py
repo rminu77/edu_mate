@@ -183,12 +183,6 @@ def load_progress(session_id: str):
         print(f"[DEBUG] 세션 ID 검색 시도: {session_id}")
         db = SessionLocal()
         try:
-            # 모든 세션 확인 (디버깅용)
-            all_sessions = db.query(SurveyProgress).all()
-            print(f"[DEBUG] 전체 저장된 세션 수: {len(all_sessions)}")
-            for session in all_sessions:
-                print(f"[DEBUG] 저장된 세션: {session.session_id}, 이름: {session.student_name}")
-            
             progress = db.query(SurveyProgress).filter(SurveyProgress.session_id == session_id).first()
             if progress:
                 print(f"[DEBUG] 세션 찾음: {progress.student_name}, 완료: {progress.completed}")
@@ -489,7 +483,7 @@ if __name__ == "__main__":
     
     if is_render:
         # Render 환경: FastAPI로 감싸서 실행
-        from fastapi import FastAPI
+        from fastapi import FastAPI, Response
         from fastapi.responses import RedirectResponse
         import uvicorn
         
@@ -504,6 +498,11 @@ if __name__ == "__main__":
         async def root():
             # 루트 경로 접속 시 Gradio 앱으로 리다이렉트
             return RedirectResponse(url="/app", status_code=302)
+
+        # Render의 내부 헬스체크가 HEAD / 를 칠 때 405가 되지 않도록 보완
+        @app.head("/")
+        async def root_head():
+            return Response(status_code=200)
         
         app = gr.mount_gradio_app(app, survey_app, path="/app")
         
