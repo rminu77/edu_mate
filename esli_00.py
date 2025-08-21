@@ -497,7 +497,9 @@ if __name__ == "__main__":
         
         @app.get("/")
         async def root():
-            return {"message": "Learning Assessment App is running"}
+            # 루트 경로 접속 시 Gradio 앱으로 리다이렉트
+            from fastapi.responses import RedirectResponse
+            return RedirectResponse(url="/app", status_code=302)
         
         app = gr.mount_gradio_app(app, survey_app, path="/app")
         
