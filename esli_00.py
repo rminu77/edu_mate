@@ -135,6 +135,7 @@ questions_part3 = {
 def save_progress(session_id: str, student_name: str, school_level: str, responses: dict):
     """검사 진행상황을 데이터베이스에 저장"""
     try:
+        print(f"[DEBUG] 저장 시도 - 세션: {session_id}, 이름: {student_name}")
         db = SessionLocal()
         try:
             # 기존 진행상황 찾기
@@ -142,9 +143,11 @@ def save_progress(session_id: str, student_name: str, school_level: str, respons
             
             # 완료된 문항 수 계산
             completed_count = sum(1 for v in responses.values() if v is not None and v != "")
+            print(f"[DEBUG] 완료된 문항 수: {completed_count}")
             
             if progress:
                 # 기존 기록 업데이트
+                print(f"[DEBUG] 기존 기록 업데이트")
                 progress.student_name = student_name
                 progress.school_level = school_level
                 progress.progress_data = json.dumps(responses, ensure_ascii=False)
@@ -152,6 +155,7 @@ def save_progress(session_id: str, student_name: str, school_level: str, respons
                 progress.last_updated = datetime.now()
             else:
                 # 새 기록 생성
+                print(f"[DEBUG] 새 기록 생성")
                 progress = SurveyProgress(
                     session_id=session_id,
                     student_name=student_name,
@@ -163,20 +167,31 @@ def save_progress(session_id: str, student_name: str, school_level: str, respons
                 db.add(progress)
             
             db.commit()
+            print(f"[DEBUG] 저장 성공")
             return True
         finally:
             db.close()
     except Exception as e:
         print(f"진행상황 저장 오류: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 def load_progress(session_id: str):
     """세션 ID로 저장된 진행상황 불러오기"""
     try:
+        print(f"[DEBUG] 세션 ID 검색 시도: {session_id}")
         db = SessionLocal()
         try:
+            # 모든 세션 확인 (디버깅용)
+            all_sessions = db.query(SurveyProgress).all()
+            print(f"[DEBUG] 전체 저장된 세션 수: {len(all_sessions)}")
+            for session in all_sessions:
+                print(f"[DEBUG] 저장된 세션: {session.session_id}, 이름: {session.student_name}")
+            
             progress = db.query(SurveyProgress).filter(SurveyProgress.session_id == session_id).first()
             if progress:
+                print(f"[DEBUG] 세션 찾음: {progress.student_name}, 완료: {progress.completed}")
                 return {
                     'student_name': progress.student_name or "",
                     'school_level': progress.school_level or "초등",
@@ -185,11 +200,15 @@ def load_progress(session_id: str):
                     'total_questions': progress.total_questions,
                     'last_updated': progress.last_updated.strftime('%Y-%m-%d %H:%M:%S')
                 }
+            else:
+                print(f"[DEBUG] 세션을 찾을 수 없음: {session_id}")
             return None
         finally:
             db.close()
     except Exception as e:
         print(f"진행상황 불러오기 오류: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 def generate_session_id():
@@ -315,7 +334,7 @@ def create_final_survey():
         
         def show_current_session_id(session_id_value):
             """현재 세션 ID 표시"""
-            return f"🔑 **현재 세션**: `{session_id_value}`\n💡 위 ID를 저장해두시면 나중에 이어서 검사할 수 있습니다!"
+            return f"🔑 **현재 세션**: `{session_id_value}`\n💡 위 ID를 저장해두시면 나중에 이어서 검사할 수 있습니다! 이름부터 쓰세요."
         
         def load_previous_progress(session_input_value):
             """이전 진행상황 불러오기"""
@@ -340,7 +359,7 @@ def create_final_survey():
                 
                 return updates + [name_update, school_update, status_msg]
             else:
-                return [gr.update() for _ in all_responses] + [gr.update(), gr.update(), "❌ 해당 세션을 찾을 수 없습니다"]
+                return [gr.update() for _ in all_responses] + [gr.update(), gr.update(), "❌ 해당 세션을 찾을 수 없습니다. 먼저 이름을 입력하고 설문에 답변하여 진행상황을 저장해주세요."]
 
         def submit(session_id_value, name, school_level_value, *responses):
             if not name or not name.strip():
