@@ -275,22 +275,42 @@ def generate_report_with_llm(student_name: str, responses: dict, school_level: s
         """
         hindrance_comment = call_llm_for_report(hindrance_prompt)
 
-        # --- 3. 점수 테이블 생성 ---
-        score_table_md = "| 구분 | 영역 | 원점수 | 표준점수(T) | 백분위(%) |\n"
-        score_table_md += "| :--- | :--- | :--- | :--- | :--- |\n"
+        # --- 3. 점수 테이블 생성 (시각적 개선) ---
+        score_table_md = "### 📊 **학습 성향 측정 결과**\n\n"
+        score_table_md += "> 전국 학생 데이터와 비교한 표준점수(T점수)와 백분위 결과입니다.\n\n"
+        score_table_md += "| 🎯 구분 | 📋 영역 | 📈 원점수 | 🎯 표준점수(T) | 📊 백분위(%) |\n"
+        score_table_md += "| :---: | :---: | :---: | :---: | :---: |\n"
         categories_in_order = {
-            "학습 동기": ['직접적 보상처벌', '사회적 관계', '자기성취'],
-            "학습 전략": ['목표세우기', '계획하기', '실천하기', '돌아보기', '학습전략'],
-            "학습 기술": ['이해하기', '사고하기', '정리하기', '암기하기', '문제풀기', '학습기술'],
-            "학습 방해 (심리)": ['스트레스민감성', '학습효능감', '친구관계', '가정환경', '학교환경'],
-            "학습 방해 (행동)": ['수면조절', '학습집중력', 'TV프로그램', '컴퓨터', '스마트기기']
+            "💪 학습 동기": ['직접적 보상처벌', '사회적 관계', '자기성취'],
+            "🎯 학습 전략": ['목표세우기', '계획하기', '실천하기', '돌아보기', '학습전략'],
+            "🧠 학습 기술": ['이해하기', '사고하기', '정리하기', '암기하기', '문제풀기', '학습기술'],
+            "😰 방해요인(심리)": ['스트레스민감성', '학습효능감', '친구관계', '가정환경', '학교환경'],
+            "📱 방해요인(행동)": ['수면조절', '학습집중력', 'TV프로그램', '컴퓨터', '스마트기기']
         }
+        
         for group, items in categories_in_order.items():
-            for item in items:
+            for idx, item in enumerate(items):
                 if item in student_scores:
                     score_data = student_scores[item]
-                    item_name = '종합' if item in ['학습전략', '학습기술'] else item.replace('세우기','').replace('하기','')
-                    score_table_md += f"| **{group.split(' ')[0]}** | {item_name} | {score_data['raw']} | {score_data['t_score']} | {score_data['percentile']} |\n"
+                    item_name = '**종합**' if item in ['학습전략', '학습기술'] else item.replace('세우기','').replace('하기','')
+                    
+                    # 백분위에 따른 시각적 표시
+                    percentile = score_data['percentile']
+                    if percentile >= 84:
+                        level_icon = "🔥"
+                    elif percentile >= 50:
+                        level_icon = "✅"
+                    else:
+                        level_icon = "⚠️"
+                    
+                    group_name = group if idx == 0 else ""  # 첫 번째 항목에만 그룹명 표시
+                    score_table_md += f"| {group_name} | {item_name} | {score_data['raw']:.1f} | **{score_data['t_score']}** | {level_icon} **{percentile}%** |\n"
+
+        # 점수 테이블 범례 추가
+        score_table_md += "\n**📌 백분위 해석 가이드**\n"
+        score_table_md += "- 🔥 **84% 이상**: 상위 16% (매우 우수)\n"
+        score_table_md += "- ✅ **50% 이상**: 평균 이상 (양호)\n"
+        score_table_md += "- ⚠️ **50% 미만**: 평균 이하 (개선 필요)\n\n"
 
         # 3-2. 종합 요약 프롬프트 (전반적인 경향성만 설명)
         summary_prompt = f"""
@@ -313,42 +333,64 @@ def generate_report_with_llm(student_name: str, responses: dict, school_level: s
         """
         summary_comment = call_llm_for_report(summary_prompt)
 
-        # --- 4. 최종 보고서 텍스트
-        report_md = f"""# {student_name} 학생 학습 성향 분석 종합 보고서
+        # --- 4. 최종 보고서 텍스트 (가독성 향상된 마크다운)
+        report_md = f"""# 📊 {student_name} 학생 학습 성향 분석 종합 보고서
 
-        ---
+---
 
-        ## Ⅰ. 검사 결과 요약
+## 🎯 Ⅰ. 검사 결과 요약
 
-        {summary_comment}
+> **{student_name}** 학생의 학습 성향을 종합적으로 분석한 결과입니다.
 
-        ---
+{summary_comment}
 
-        ## Ⅱ. 학습 성향 종합 분석 및 코칭
+---
 
-        ### 1. 학습 동기: 무엇이 나의 공부를 이끌고 있는가?
+## 📈 Ⅱ. 상세 분석 결과
 
-        {motivation_comment}
+{score_table_md}
 
-        ---
+---
 
-        ### 2. 학습 전략/기술: 나는 어떻게 공부하고 있는가?
+## 🚀 Ⅲ. 학습 성향 종합 분석 및 맞춤 코칭
 
-        {strategy_comment}
+### 💡 **1. 학습 동기** - 무엇이 나의 공부를 이끌고 있는가?
 
-        ---
+> **현재 동기 유형**: `{m_type}`
 
-        ### 3. 학습 방해 요인: 내 공부를 막는 것은 없는가?
+**📋 분석 결과**
+{motivation_comment}
 
-        {hindrance_comment}
+---
 
-        ---
+### 🎯 **2. 학습 전략/기술** - 나는 어떻게 공부하고 있는가?
 
-        ### 이건 결과에 안나옴 디버깅용
+> **현재 학습 수준**: `{s_analysis}`
 
-        {score_table_md}        
-        
-        """
+**📋 분석 결과**  
+{strategy_comment}
+
+---
+
+### ⚠️ **3. 학습 방해 요인** - 내 공부를 막는 것은 없는가?
+
+> **방해 요인 분석**: `{h_analysis}`
+
+**📋 분석 결과**  
+{hindrance_comment}
+
+---
+
+## 🎉 마무리
+
+이 보고서는 **{student_name}** 학생의 현재 학습 성향을 객관적으로 분석한 결과입니다. 
+분석 결과를 바탕으로 자신의 강점을 더욱 발전시키고, 개선이 필요한 부분은 체계적으로 보완해 나가시기 바랍니다.
+
+**💪 Remember**: 모든 학습자는 고유한 특성을 가지고 있으며, 자신만의 방식으로 성장할 수 있습니다!
+
+---
+*📅 생성일시: {datetime.now().strftime('%Y년 %m월 %d일 %H시 %M분')}*
+"""
 
         # --- 4. 결과를 데이터베이스에 저장 ---
         try:
