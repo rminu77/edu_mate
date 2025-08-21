@@ -126,7 +126,13 @@ def generate_report_with_llm(student_name: str, responses: dict, school_level: s
                 mean = std_info_df.loc[std_name, '평균']
                 std = std_info_df.loc[std_name, '표준편차']
                 t_score = round(100 + 15 * ((raw_val - mean) / std))
-                percentile = percentile_df.loc[t_score, '백분위'] if t_score in percentile_df.index else "N/A"
+                # T점수 범위 제한 및 백분위 조회
+                if t_score < 0:
+                    percentile = 0
+                elif t_score > 200:
+                    percentile = 99
+                else:
+                    percentile = percentile_df.loc[t_score, '백분위'] if t_score in percentile_df.index else "N/A"
                 student_scores[std_name] = {
                     'raw': raw_val,
                     't_score': t_score,
@@ -163,7 +169,13 @@ def generate_report_with_llm(student_name: str, responses: dict, school_level: s
             mean = std_info_df.loc[composite_name, '평균']
             std = std_info_df.loc[composite_name, '표준편차']
             t_score = round(100 + 15 * ((raw_approx - mean) / std))
-            percentile = percentile_df.loc[t_score, '백분위'] if t_score in percentile_df.index else 50
+            # T점수 범위 제한 및 백분위 조회
+            if t_score < 0:
+                percentile = 0
+            elif t_score > 200:
+                percentile = 99
+            else:
+                percentile = percentile_df.loc[t_score, '백분위'] if t_score in percentile_df.index else 50
             student_scores[composite_name] = {
                 'raw': raw_approx,
                 't_score': t_score,
