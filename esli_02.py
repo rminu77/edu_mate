@@ -30,6 +30,12 @@ STD_INFO_CACHE: Dict[str, pd.DataFrame] = {}
 PERCENTILE_DF_CACHE: Optional[pd.DataFrame] = None
 QUESTION_MAP_CACHE: Optional[List[Tuple[str, str]]] = None
 
+# --------------------
+# 표준점수(T) 설정 (본 프로젝트는 평균 100, 표준편차 15 스케일)
+# --------------------
+T_MEAN = 100
+T_SD = 15
+
 
 def get_std_info_df(level: str) -> pd.DataFrame:
     global STD_INFO_CACHE
@@ -78,6 +84,55 @@ def get_question_map_pairs() -> List[Tuple[str, str]]:
         return QUESTION_MAP_CACHE
     finally:
         session.close()
+
+
+def compute_t_and_percentile(raw_value: float, std_name: str, std_info_df: pd.DataFrame, percentile_df: pd.DataFrame) -> Tuple[int, int]:
+    """원점수와 기준표로부터 T점수와 백분위를 계산한다.
+    - 표준편차가 0이거나 NaN이면 T=100, 백분위는 50(또는 표에 100이 있으면 해당 값)
+    - 계산된 T는 [0, 200]로 클램프
+    - 백분위 표에 정확히 없으면 가장 가까운 T에 대해 보간(최근접) 적용
+    """
+    try:
+        mean = float(std_info_df.loc[std_name, '평균'])
+        std = float(std_info_df.loc[std_name, '표준편차'])
+    except Exception:
+        # 기준표에 없으면 중립값 반환
+        t = T_MEAN
+        pct = int(percentile_df.loc[T_MEAN, '백분위']) if T_MEAN in percentile_df.index else 50
+        return t, pct
+
+    # 안전한 T 계산
+    if std is None or std == 0 or pd.isna(std):
+        t_score = T_MEAN
+    else:
+        z = (raw_value - mean) / std
+        t_score = round(T_MEAN + T_SD * z)
+
+    # 경계 클램프
+    if t_score < 0:
+        t_score = 0
+    elif t_score > 200:
+        t_score = 200
+
+    # 백분위 계산
+    if t_score in percentile_df.index:
+        pct = int(percentile_df.loc[t_score, '백분위'])
+    else:
+        # 최근접 이웃 보간
+        candidates = percentile_df.index.to_list()
+        if not candidates:
+            pct = 50
+        else:
+            nearest = min(candidates, key=lambda x: abs(x - t_score))
+            pct = int(percentile_df.loc[nearest, '백분위'])
+
+    # 상하한 보정
+    if t_score >= 180 and pct < 99:
+        pct = 99
+    if t_score <= 20 and pct > 0:
+        pct = max(0, pct)
+
+    return int(t_score), int(pct)
 
 
 def call_llm_for_report(prompt):
@@ -164,20 +219,11 @@ def generate_report_with_llm(student_name: str, responses: dict, school_level: s
         student_scores = {}
         for std_name, raw_val in student_raw_scores.items():
             if std_name in std_info_df.index:
-                mean = std_info_df.loc[std_name, '평균']
-                std = std_info_df.loc[std_name, '표준편차']
-                t_score = round(100 + 15 * ((raw_val - mean) / std))
-                # T점수 범위 제한 및 백분위 조회
-                if t_score < 0:
-                    percentile = 0
-                elif t_score > 200:
-                    percentile = 99
-                else:
-                    percentile = percentile_df.loc[t_score, '백분위'] if t_score in percentile_df.index else "N/A"
+                t_score, percentile = compute_t_and_percentile(raw_val, std_name, std_info_df, percentile_df)
                 student_scores[std_name] = {
                     'raw': raw_val,
                     't_score': t_score,
-                    'percentile': int(percentile) if percentile != "N/A" else 0
+                    'percentile': percentile,
                 }
 
         # 필수 항목 기본값 보정(동기 3종 + 전략/기술 구성요소 + 전략/기술 종합)
@@ -189,14 +235,12 @@ def generate_report_with_llm(student_name: str, responses: dict, school_level: s
         ]
         for required in required_list:
             if required not in student_scores and required in std_info_df.index:
-                mean = std_info_df.loc[required, '평균']
-                # 평균을 원점수로 간주하면 T=100이 되므로 백분위는 표에서 100이 없으면 50으로 처리
-                t_score = 100
-                percentile = percentile_df.loc[t_score, '백분위'] if t_score in percentile_df.index else 50
+                mean = float(std_info_df.loc[required, '평균'])
+                t_score, percentile = compute_t_and_percentile(mean, required, std_info_df, percentile_df)
                 student_scores[required] = {
                     'raw': mean,
                     't_score': t_score,
-                    'percentile': int(percentile)
+                    'percentile': percentile,
                 }
 
         # 복합 지표(학습전략/학습기술) 보정: 구성 항목 평균으로 raw 근사 후 표준점수 계산
@@ -207,20 +251,11 @@ def generate_report_with_llm(student_name: str, responses: dict, school_level: s
             if len(available) == 0 or composite_name not in std_info_df.index:
                 return
             raw_approx = float(sum(available)) / len(available)
-            mean = std_info_df.loc[composite_name, '평균']
-            std = std_info_df.loc[composite_name, '표준편차']
-            t_score = round(100 + 15 * ((raw_approx - mean) / std))
-            # T점수 범위 제한 및 백분위 조회
-            if t_score < 0:
-                percentile = 0
-            elif t_score > 200:
-                percentile = 99
-            else:
-                percentile = percentile_df.loc[t_score, '백분위'] if t_score in percentile_df.index else 50
+            t_score, percentile = compute_t_and_percentile(raw_approx, composite_name, std_info_df, percentile_df)
             student_scores[composite_name] = {
                 'raw': raw_approx,
                 't_score': t_score,
-                'percentile': int(percentile)
+                'percentile': percentile,
             }
 
         ensure_composite('학습전략', ['목표세우기', '계획하기', '실천하기', '돌아보기'])
