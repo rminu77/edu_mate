@@ -73,11 +73,6 @@ def calculate_scores(scored_responses: dict) -> pd.DataFrame:
         results_df['학습전략'] = results_df[strategy_cols].sum(axis=1)
         results_df['학습기술'] = results_df[skill_cols].sum(axis=1)
 
-        # esli_02.py와의 호환성을 위해 '실천하기' 컬럼을 '정리하기'로 복사
-        if '실천하기' in results_df.columns:
-             results_df['정리하기'] = results_df['실천하기']
-
-
         print("--- 원점수 계산 완료 ---")
         print(results_df.head())
         return results_df

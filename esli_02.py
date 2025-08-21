@@ -41,7 +41,7 @@ def call_llm_for_report(prompt):
         return f"--- [LLM 코멘트 생성 실패: {e}] ---"
 
 
-def generate_report_with_llm(student_name: str, responses: dict):
+def generate_report_with_llm(student_name: str, responses: dict, school_level: str = "초등"):
     """
     학생 데이터를 분석하고 LLM을 호출하여 맞춤형 보고서를 생성하고, 결과를 DB에 저장합니다.
     """
@@ -49,8 +49,8 @@ def generate_report_with_llm(student_name: str, responses: dict):
     try:
         # --- 1. 데이터 로드 및 계산 ---
         # CSV 파일 로드 대신, Gradio 앱에서 직접 받은 responses 딕셔너리를 사용합니다.
-        # 참조값은 DB에서 조회 (기본: 초등 기준)
-        ref_level = os.getenv("REF_LEVEL", "초등")
+        # 참조값은 DB에서 조회 (사용자가 선택한 학교급 기준)
+        ref_level = school_level
         # 테이블/시드 보장 (배포 환경에서 테이블 미생성 대비)
         try:
             init_db()

@@ -131,8 +131,15 @@ def create_final_survey():
     with gr.Blocks(title="종합 학습 진단 검사", theme=gr.themes.Soft()) as demo:
         gr.Markdown("# 종합 학습 진단 검사")
 
-        # 이름 입력 필드
-        name_input = gr.Textbox(label="이름", placeholder="검사자 이름을 입력해주세요", max_lines=1)
+        # 이름 입력 필드 및 학교급 선택
+        with gr.Row():
+            name_input = gr.Textbox(label="이름", placeholder="검사자 이름을 입력해주세요", max_lines=1, scale=2)
+            school_level = gr.Dropdown(
+                label="학교급", 
+                choices=["초등", "중등", "고등"], 
+                value="초등",
+                scale=1
+            )
 
         with gr.Row():
             # 좌측: 설문 영역
@@ -180,7 +187,7 @@ def create_final_survey():
                 gr.Markdown("📷 *이미지로 수학 문제나 과제를 업로드하면 단계별로 도움을 받을 수 있어요!*")
 
 
-        def submit(name, *responses):
+        def submit(name, school_level_value, *responses):
             if not name or not name.strip():
                 return "오류: 이름을 입력해주세요.", gr.update(visible=False)
 
@@ -199,8 +206,8 @@ def create_final_survey():
                 raw_scores_df = calculate_scores(scored_responses)
                 
                 # 2. 보고서 생성 및 DB 저장 (esli_02)
-                # generate_report_with_llm이 scored_responses 딕셔너리도 함께 받는다고 가정
-                report_content = generate_report_with_llm(student_name=name.strip(), responses=scored_responses)
+                # generate_report_with_llm이 scored_responses 딕셔너리와 학교급을 함께 받는다고 가정
+                report_content = generate_report_with_llm(student_name=name.strip(), responses=scored_responses, school_level=school_level_value)
 
                 if "데이터베이스 저장에 실패했습니다" in report_content or "[LLM 코멘트 생성 실패" in report_content:
                      return f"보고서 생성 중 일부 오류가 발생했습니다. 하지만 생성된 내용은 다음과 같습니다.", gr.update(value=report_content, visible=True)
@@ -228,7 +235,7 @@ def create_final_survey():
             return history, "", None # 입력창과 이미지 업로드 초기화
 
         # 이벤트 바인딩
-        all_components = [name_input] + list(all_responses.values())
+        all_components = [name_input, school_level] + list(all_responses.values())
         submit_btn.click(fn=submit, inputs=all_components, outputs=[output_text, report_output])
 
         chat_send.click(
