@@ -178,7 +178,13 @@ def gradio_chat_with_history(message: str, history: list, image, student_name: s
         if ai_msg:
             conversation_history.append({"role": "assistant", "content": ai_msg})
 
-    image_path = image.name if image else None
+    # 이미지가 파일 객체인 경우 .name 속성을 사용하고, 문자열인 경우 그대로 사용
+    image_path = None
+    if image:
+        if hasattr(image, 'name'):
+            image_path = image.name
+        elif isinstance(image, str):
+            image_path = image
     response = get_ai_response(message, conversation_history, image_path=image_path, student_name=student_name)
     return response
 

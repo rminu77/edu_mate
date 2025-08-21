@@ -34,7 +34,6 @@ def call_llm_for_report(prompt):
                 {"role": "user", "content": prompt}
             ],
             temperature=0.75,
-            max_tokens=1500
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
@@ -72,19 +71,6 @@ def generate_report_with_llm(student_name: str, responses: dict):
             ).set_index("표준점수")
         finally:
             session.close()
-
-        # 이제 모든 키가 표준 항목명으로 통일되었으므로 COLUMN_MAP은 단순화
-        COLUMN_MAP = {
-            '사회적바람직성': '사회적바람직성',
-            '직접적 보상처벌': '직접적 보상처벌', '사회적 관계': '사회적 관계', '자기성취': '자기성취',
-            '스트레스민감성': '스트레스민감성', '학습효능감': '학습효능감', '친구관계': '친구관계',
-            '가정환경': '가정환경', '학교환경': '학교환경', '수면조절': '수면조절',
-            '학습집중력': '학습집중력', 'TV프로그램': 'TV프로그램', '컴퓨터': '컴퓨터',
-            '스마트기기': '스마트기기', '학습전략': '학습전략', '학습기술': '학습기술',
-            '목표세우기': '목표세우기', '계획하기': '계획하기', '실천하기': '실천하기',
-            '돌아보기': '돌아보기', '이해하기': '이해하기', '사고하기': '사고하기',
-            '정리하기': '정리하기', '암기하기': '암기하기', '문제풀기': '문제풀기',
-        }
 
         # 전달받은 responses로부터 항목별 원점수 집계 (DB의 질문→항목 매핑 사용)
         student_raw_scores = {}
@@ -133,26 +119,19 @@ def generate_report_with_llm(student_name: str, responses: dict):
                 student_raw_scores[name] = float(sum(vals)) / len(vals) * 25  # 1~4척도 → 100점 환산 근사
 
 
+        # 표준점수 계산
         student_scores = {}
-        for col_alias, col_std_name in COLUMN_MAP.items():
-            # 사용자 응답을 집계한 키가 alias('직접적','관계적',...) 또는 표준명('사회적 관계',...) 중 무엇이든 매칭되도록 처리
-            if col_std_name in std_info_df.index:
-                raw_val = None
-                if col_alias in student_raw_scores:
-                    raw_val = student_raw_scores[col_alias]
-                elif col_std_name in student_raw_scores:
-                    raw_val = student_raw_scores[col_std_name]
-
-                if raw_val is not None:
-                    mean = std_info_df.loc[col_std_name, '평균']
-                    std = std_info_df.loc[col_std_name, '표준편차']
-                    t_score = round(100 + 15 * ((raw_val - mean) / std))
-                    percentile = percentile_df.loc[t_score, '백분위'] if t_score in percentile_df.index else "N/A"
-                    student_scores[col_std_name] = {
-                        'raw': raw_val,
-                        't_score': t_score,
-                        'percentile': int(percentile) if percentile != "N/A" else 0
-                    }
+        for std_name, raw_val in student_raw_scores.items():
+            if std_name in std_info_df.index:
+                mean = std_info_df.loc[std_name, '평균']
+                std = std_info_df.loc[std_name, '표준편차']
+                t_score = round(100 + 15 * ((raw_val - mean) / std))
+                percentile = percentile_df.loc[t_score, '백분위'] if t_score in percentile_df.index else "N/A"
+                student_scores[std_name] = {
+                    'raw': raw_val,
+                    't_score': t_score,
+                    'percentile': int(percentile) if percentile != "N/A" else 0
+                }
 
         # 필수 항목 기본값 보정(동기 3종 + 전략/기술 구성요소 + 전략/기술 종합)
         required_list = [
@@ -424,11 +403,3 @@ def get_hindrance_analysis(scores):
     if psych_hindrance and not behav_hindrance: return "학습 방해 부분에서는 심리적 부분에서 좋지 않은 영향을 받고 있는 것 같습니다.", "심리적 안정감을 찾기 위한 노력이 필요합니다."
     if not psych_hindrance and behav_hindrance: return "학습 방해 부분에서는 행동적 부분에서 좋지 않은 영향을 받고 있는 것 같습니다.", "학습 습관을 개선하기 위한 노력이 필요합니다."
     return "학습 방해 부분에서는 심리적 부분과 행동적 부분 모두 좋지 않은 영향을 받고 있는 것 같습니다.", "심리적, 행동적 측면 모두 개선이 필요합니다."
-
-# --- 메인 함수 실행 (테스트용으로 남겨두거나 삭제) ---
-if __name__ == "__main__":
-    # 테스트를 위해서는 'responses' 딕셔너리를 실제 데이터처럼 만들어야 합니다.
-    # 예시: test_responses = {'문항1': 3, '문항2': 4, ...}
-    # result_message = generate_report_with_llm("홍길동", test_responses)
-    # print(result_message)
-    print("esli_02.py 실행. 데이터베이스 연동 테스트를 위해서는 직접 함수를 호출해야 합니다.")
