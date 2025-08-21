@@ -104,9 +104,12 @@ def seed_reference_data():
                         df = pd.read_csv(path, index_col=0)
                         # 기대 컬럼명: '평균', '표준편차'
                         for name, row in df.iterrows():
-                            mean_val = float(row.get("평균"))
-                            std_val = float(row.get("표준편차"))
-                            session.add(ReferenceStandard(level=level, name=str(name), mean=mean_val, std=std_val))
+                            # NaN 값 처리 - 빈 값이나 NaN이 있으면 건너뛰기
+                            mean_val = row.get("평균")
+                            std_val = row.get("표준편차")
+                            if pd.isna(mean_val) or pd.isna(std_val):
+                                continue
+                            session.add(ReferenceStandard(level=level, name=str(name), mean=float(mean_val), std=float(std_val)))
                         session.commit()
                         print(f"표준점수 시드 완료: {level}")
                     except Exception as e:
@@ -125,8 +128,13 @@ def seed_reference_data():
                     if "표준점수" not in df.columns and df.shape[1] >= 2:
                         df.columns = ["표준점수", "백분위"]
                     for _, row in df.iterrows():
-                        t = int(row.get("표준점수"))
-                        p = int(row.get("백분위"))
+                        # NaN 값 처리 - 빈 값이나 NaN이 있으면 건너뛰기
+                        t_val = row.get("표준점수")
+                        p_val = row.get("백분위")
+                        if pd.isna(t_val) or pd.isna(p_val):
+                            continue
+                        t = int(float(t_val))
+                        p = int(float(p_val))
                         session.add(ReferencePercentile(t_score=t, percentile=p))
                     session.commit()
                     print("백분위점수 시드 완료")
