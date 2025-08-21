@@ -317,10 +317,10 @@ def create_final_survey():
             percentage = round((completed / total) * 100) if total > 0 else 0
             return f"📊 **진행률**: {completed}/{total} ({percentage}%)"
         
-        def auto_save_progress(session_id, name, school_level_value, sample_data_checkbox, *responses):
+        def auto_save_progress(session_id, name, school_level_value, sample_checkbox, *responses):
             """자동 저장 (응답 변경 시마다 호출)"""
             # 샘플 데이터 모드이면 저장하지 않음
-            if sample_data_checkbox:
+            if sample_checkbox:
                 return ""
                 
             if name and name.strip():  # 이름이 입력된 경우에만 저장
@@ -433,7 +433,7 @@ def create_final_survey():
             # 이름이 입력된 경우 자동 저장
             response_component.change(
                 fn=auto_save_progress,
-                inputs=[session_id, name_input, school_level, sample_data_checkbox] + list(all_responses.values()),
+                inputs=[session_id, name_input, school_level, sample_checkbox] + list(all_responses.values()),
                 outputs=[save_status]
             )
         
