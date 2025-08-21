@@ -475,6 +475,8 @@ if __name__ == "__main__":
     init_db()
     
     survey_app = create_final_survey()
+    # Gradio 처리큐로 LLM 작업 폭주 방지 (동시 처리 10)
+    survey_app = survey_app.queue(concurrency_count=10)
     port = int(os.getenv("PORT", 7861))
     host = os.getenv("HOST", "0.0.0.0")
     
@@ -506,7 +508,13 @@ if __name__ == "__main__":
         
         app = gr.mount_gradio_app(app, survey_app, path="/app")
         
-        uvicorn.run(app, host="0.0.0.0", port=port)
+        # uvloop/httptools 사용 시 약간의 성능 향상
+        try:
+            import uvloop  # noqa: F401
+            import httptools  # noqa: F401
+            uvicorn.run(app, host="0.0.0.0", port=port, loop="uvloop", http="httptools")
+        except Exception:
+            uvicorn.run(app, host="0.0.0.0", port=port)
     else:
         # 로컬 환경: 기존 방식
         survey_app.launch(

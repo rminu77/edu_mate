@@ -4,6 +4,7 @@ import os
 from datetime import datetime
 from dotenv import load_dotenv
 import json
+from typing import Optional, Dict, List, Tuple
 
 # 데이터베이스 연동을 위한 import
 from database import (
@@ -20,6 +21,63 @@ from database import (
 load_dotenv()
 # 환경 변수에서 OpenAI API 키를 읽어옵니다
 openai.api_key = os.getenv("OPENAI_API_KEY")
+
+
+# --------------------
+# 참조데이터 메모리 캐시
+# --------------------
+STD_INFO_CACHE: Dict[str, pd.DataFrame] = {}
+PERCENTILE_DF_CACHE: Optional[pd.DataFrame] = None
+QUESTION_MAP_CACHE: Optional[List[Tuple[str, str]]] = None
+
+
+def get_std_info_df(level: str) -> pd.DataFrame:
+    global STD_INFO_CACHE
+    if level in STD_INFO_CACHE:
+        return STD_INFO_CACHE[level]
+    session = SessionLocal()
+    try:
+        rows = session.query(ReferenceStandard).filter(ReferenceStandard.level == level).all()
+        if not rows:
+            raise RuntimeError(f"오류: 기준표(표준점수-{level})가 DB에 없습니다. database.py의 seed_reference_data를 실행하세요.")
+        df = pd.DataFrame({
+            "평균": {r.name: r.mean for r in rows},
+            "표준편차": {r.name: r.std for r in rows},
+        })
+        STD_INFO_CACHE[level] = df
+        return df
+    finally:
+        session.close()
+
+
+def get_percentile_df() -> pd.DataFrame:
+    global PERCENTILE_DF_CACHE
+    if PERCENTILE_DF_CACHE is not None:
+        return PERCENTILE_DF_CACHE
+    session = SessionLocal()
+    try:
+        pct_rows = session.query(ReferencePercentile).all()
+        df = pd.DataFrame({
+            "표준점수": [r.t_score for r in pct_rows],
+            "백분위": [r.percentile for r in pct_rows],
+        }).set_index("표준점수")
+        PERCENTILE_DF_CACHE = df
+        return df
+    finally:
+        session.close()
+
+
+def get_question_map_pairs() -> List[Tuple[str, str]]:
+    global QUESTION_MAP_CACHE
+    if QUESTION_MAP_CACHE is not None:
+        return QUESTION_MAP_CACHE
+    session = SessionLocal()
+    try:
+        exact_maps = session.query(ReferenceQuestionMap).all()
+        QUESTION_MAP_CACHE = [(m.pattern, m.standard_name) for m in exact_maps]
+        return QUESTION_MAP_CACHE
+    finally:
+        session.close()
 
 
 def call_llm_for_report(prompt):
@@ -57,30 +115,13 @@ def generate_report_with_llm(student_name: str, responses: dict, school_level: s
             seed_reference_data()
         except Exception:
             pass
-        session = SessionLocal()
-        try:
-            std_rows = session.query(ReferenceStandard).filter(ReferenceStandard.level == ref_level).all()
-            if not std_rows:
-                return f"오류: 기준표(표준점수-{ref_level})가 DB에 없습니다. database.py의 seed_reference_data를 실행하세요."
-            std_info_df = pd.DataFrame(
-                {"평균": {r.name: r.mean for r in std_rows}, "표준편차": {r.name: r.std for r in std_rows}}
-            )
-            pct_rows = session.query(ReferencePercentile).all()
-            percentile_df = pd.DataFrame(
-                {"표준점수": [r.t_score for r in pct_rows], "백분위": [r.percentile for r in pct_rows]}
-            ).set_index("표준점수")
-        finally:
-            session.close()
+        std_info_df = get_std_info_df(ref_level)
+        percentile_df = get_percentile_df()
 
         # 전달받은 responses로부터 항목별 원점수 집계 (DB의 질문→항목 매핑 사용)
         student_raw_scores = {}
-        qmap_session = SessionLocal()
-        try:
-            # 전수 매핑(정확 문항 텍스트)이 우선
-            exact_maps = qmap_session.query(ReferenceQuestionMap).all()
-            pattern_to_name = [(m.pattern, m.standard_name) for m in exact_maps]
-        finally:
-            qmap_session.close()
+        # 전수 매핑(정확 문항 텍스트)이 우선 (메모리 캐시)
+        pattern_to_name = get_question_map_pairs()
         buckets = {}
         for q, val in responses.items():
             # 정확 일치 우선

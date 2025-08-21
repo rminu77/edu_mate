@@ -9,6 +9,8 @@ import pandas as pd
 load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./learning_assessment.db")
+DB_POOL_SIZE = int(os.getenv("DB_POOL_SIZE", "5"))
+DB_MAX_OVERFLOW = int(os.getenv("DB_MAX_OVERFLOW", "0"))
 
 Base = declarative_base()
 
@@ -72,7 +74,17 @@ class ReferenceQuestionUnmapped(Base):
     count = Column(Integer, default=1)
     last_seen = Column(DateTime, default=datetime.now)
 
-engine = create_engine(DATABASE_URL)
+# 엔진 생성 (SQLite와 기타 DB의 풀 설정 분기)
+if DATABASE_URL.startswith("sqlite"):
+    engine = create_engine(DATABASE_URL)
+else:
+    engine = create_engine(
+        DATABASE_URL,
+        pool_size=DB_POOL_SIZE,
+        max_overflow=DB_MAX_OVERFLOW,
+        pool_pre_ping=True,
+        pool_timeout=30,
+    )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def init_db():
