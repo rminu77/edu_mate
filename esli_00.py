@@ -408,7 +408,7 @@ def create_final_survey():
 
         # 이벤트 바인딩
         all_components = [session_id, name_input, school_level] + list(all_responses.values())
-        submit_btn.click(fn=submit, inputs=all_components, outputs=[output_text, report_output])
+        submit_btn.click(fn=submit, inputs=all_components, outputs=[output_text, report_output], concurrency_limit=15)
 
         # 샘플 체크박스 이벤트 바인딩
         sample_checkbox.change(
@@ -460,12 +460,14 @@ def create_final_survey():
         chat_send.click(
             fn=chat_respond,
             inputs=[chat_input, chatbot, image_input, name_input],
-            outputs=[chatbot, chat_input, image_input]
+            outputs=[chatbot, chat_input, image_input],
+            concurrency_limit=15
         )
         chat_input.submit(
             fn=chat_respond,
             inputs=[chat_input, chatbot, image_input, name_input],
-            outputs=[chatbot, chat_input, image_input]
+            outputs=[chatbot, chat_input, image_input],
+            concurrency_limit=15
         )
 
     return demo
@@ -475,8 +477,7 @@ if __name__ == "__main__":
     init_db()
     
     survey_app = create_final_survey()
-    # Gradio 처리큐로 LLM 작업 폭주 방지 (동시 처리 15)
-    survey_app = survey_app.queue(concurrency_count=15)
+    # Gradio v4: 전역 queue(deprecated) 대신 이벤트별 concurrency_limit 사용
     port = int(os.getenv("PORT", 7861))
     host = os.getenv("HOST", "0.0.0.0")
     

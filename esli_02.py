@@ -88,7 +88,7 @@ def call_llm_for_report(prompt):
         response = openai.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": "당신은 학생의 학습 성향 데이터를 분석하고 조언하는 전문 학습 코치입니다. 주어진 데이터를 기반으로, 학생에게 친절하고 지지적이지만, 전문적인 말투를 사용해 독창적인 보고서를 작성해 주세요. 딱딱한 설명서가 아닌, 학생의 성장을 돕는 따뜻한 조언의 느낌을 담아주세요."},
+                {"role": "system", "content": "당신은 학생의 학습 성향 데이터를 분석하고 조언하는 전문 학습 코치입니다. 주어진 데이터를 기반으로, 학생에게 친절하고 지지적이지만, 전문적인 말투를 사용해 독창적인 보고서를 작성해 주세요.  T점수나 백분위 등의 표현을 지양하고 딱딱한 설명서가 아닌, 학생의 성장을 돕는 따뜻한 조언의 느낌을 담아주세요."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.75,
