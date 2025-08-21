@@ -17,6 +17,8 @@ services:
         value: 7861
       - key: HOST
         value: "0.0.0.0"
+      - key: RENDER
+        value: "true"
 
   - type: pserv
     name: edu-mate-db

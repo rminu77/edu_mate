@@ -461,9 +461,12 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", 7861))
     host = os.getenv("HOST", "0.0.0.0")
     
+    # Render 환경에서는 share=True 필요
+    is_render = os.getenv("RENDER", "false").lower() == "true"
+    
     survey_app.launch(
         server_name=host,
         server_port=port,
-        share=False,
+        share=is_render,  # Render에서만 share=True
         inbrowser=False
     )
