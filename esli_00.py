@@ -440,12 +440,12 @@ def create_final_survey():
         # 이름이나 학교급 변경 시에도 자동 저장
         name_input.change(
             fn=auto_save_progress,
-            inputs=[session_id, name_input, school_level, sample_data_checkbox] + list(all_responses.values()),
+            inputs=[session_id, name_input, school_level, sample_checkbox] + list(all_responses.values()),
             outputs=[save_status]
         )
         school_level.change(
             fn=auto_save_progress,
-            inputs=[session_id, name_input, school_level, sample_data_checkbox] + list(all_responses.values()),
+            inputs=[session_id, name_input, school_level, sample_checkbox] + list(all_responses.values()),
             outputs=[save_status]
         )
         
