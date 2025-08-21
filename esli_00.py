@@ -210,6 +210,9 @@ def create_final_survey():
             with gr.Column(scale=1):
                 progress_info = gr.Markdown("📊 **진행률**: 0/150 (0%)")
             
+        # 현재 세션 ID 표시 (세션 입력 필드 바로 위)
+        current_session_display = gr.Markdown("")
+            
         with gr.Row():
             session_input = gr.Textbox(label="세션 ID", placeholder="이전 검사를 이어하려면 세션 ID를 입력하세요", max_lines=1, scale=3)
             load_progress_btn = gr.Button("💾 이전 진행상황 불러오기", scale=1)
@@ -309,6 +312,10 @@ def create_final_survey():
                 else:
                     return "❌ 저장 실패"
             return ""
+        
+        def show_current_session_id(session_id_value):
+            """현재 세션 ID 표시"""
+            return f"🔑 **현재 세션**: `{session_id_value}`\n💡 위 ID를 저장해두시면 나중에 이어서 검사할 수 있습니다!"
         
         def load_previous_progress(session_input_value):
             """이전 진행상황 불러오기"""
@@ -424,6 +431,13 @@ def create_final_survey():
             fn=load_previous_progress,
             inputs=[session_input],
             outputs=list(all_responses.values()) + [name_input, school_level, save_status]
+        )
+        
+        # 페이지 로드 시 현재 세션 ID 표시
+        demo.load(
+            fn=show_current_session_id,
+            inputs=[session_id],
+            outputs=[current_session_display]
         )
 
         chat_send.click(
