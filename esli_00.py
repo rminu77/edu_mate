@@ -489,7 +489,17 @@ if __name__ == "__main__":
         import uvicorn
         
         app = FastAPI()
-        app = gr.mount_gradio_app(app, survey_app, path="/")
+        
+        # 헬스체크 엔드포인트 추가
+        @app.get("/health")
+        async def health_check():
+            return {"status": "healthy", "service": "learning-assessment"}
+        
+        @app.get("/")
+        async def root():
+            return {"message": "Learning Assessment App is running"}
+        
+        app = gr.mount_gradio_app(app, survey_app, path="/app")
         
         uvicorn.run(app, host="0.0.0.0", port=port)
     else:
