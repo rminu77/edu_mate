@@ -1,8 +1,8 @@
 import os
 import openai
 from dotenv import load_dotenv
-from langchain_openai import OpenAIEmbeddings
-from langchain_chroma import Chroma
+from langchain_community.embeddings import OpenAIEmbeddings
+from langchain_community.vectorstores import Chroma
 import json
 from datetime import datetime
 import base64
