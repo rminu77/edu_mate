@@ -475,8 +475,8 @@ if __name__ == "__main__":
     init_db()
     
     survey_app = create_final_survey()
-    # Gradio 처리큐로 LLM 작업 폭주 방지 (동시 처리 10)
-    survey_app = survey_app.queue(concurrency_count=10)
+    # Gradio 처리큐로 LLM 작업 폭주 방지 (동시 처리 15)
+    survey_app = survey_app.queue(concurrency_count=15)
     port = int(os.getenv("PORT", 7861))
     host = os.getenv("HOST", "0.0.0.0")
     
