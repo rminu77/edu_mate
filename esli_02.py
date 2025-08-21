@@ -346,13 +346,7 @@ def generate_report_with_llm(student_name: str, responses: dict, school_level: s
 
 ---
 
-## 📈 Ⅱ. 상세 분석 결과
-
-{score_table_md}
-
----
-
-## 🚀 Ⅲ. 학습 성향 종합 분석 및 맞춤 코칭
+## 🚀 Ⅱ. 학습 성향 종합 분석 및 맞춤 코칭
 
 ### 💡 **1. 학습 동기** - 무엇이 나의 공부를 이끌고 있는가?
 
@@ -387,6 +381,12 @@ def generate_report_with_llm(student_name: str, responses: dict, school_level: s
 분석 결과를 바탕으로 자신의 강점을 더욱 발전시키고, 개선이 필요한 부분은 체계적으로 보완해 나가시기 바랍니다.
 
 **💪 Remember**: 모든 학습자는 고유한 특성을 가지고 있으며, 자신만의 방식으로 성장할 수 있습니다!
+
+---
+
+## 🔍 디버깅용 - 상세 분석 결과
+
+{score_table_md}
 
 ---
 *📅 생성일시: {datetime.now().strftime('%Y년 %m월 %d일 %H시 %M분')}*
