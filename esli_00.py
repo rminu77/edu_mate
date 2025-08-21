@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Dict, List
 import pandas as pd
 import os
+import random
 
 # --- 프로젝트 모듈 임포트 ---
 from esli_01 import calculate_scores
@@ -130,6 +131,9 @@ questions_part3 = {
 def create_final_survey():
     with gr.Blocks(title="종합 학습 진단 검사", theme=gr.themes.Soft()) as demo:
         gr.Markdown("# 종합 학습 진단 검사")
+        
+        # 샘플 데이터 옵션
+        sample_checkbox = gr.Checkbox(label="🎯 샘플 데이터로 테스트하기", value=False, info="체크하면 모든 설문이 임의의 값으로 자동 채워집니다")
 
         # 이름 입력 필드 및 학교급 선택
         with gr.Row():
@@ -186,6 +190,22 @@ def create_final_survey():
                 gr.Markdown("💡 *팁: 검사를 완료하면 더 정확한 맞춤 조언을 받을 수 있어요!*")
                 gr.Markdown("📷 *이미지로 수학 문제나 과제를 업로드하면 단계별로 도움을 받을 수 있어요!*")
 
+        # 샘플 데이터 자동 채우기 함수
+        def fill_sample_data(use_sample):
+            if use_sample:
+                # 각 설문에 임의의 값(1-4) 할당
+                options = ["아니다", "조금 아니다", "조금 그렇다", "그렇다"]
+                updates = []
+                for _ in all_responses:
+                    random_choice = random.choice(options)
+                    updates.append(gr.update(value=random_choice))
+                return updates
+            else:
+                # 체크 해제 시 모든 값을 None으로 초기화
+                updates = []
+                for _ in all_responses:
+                    updates.append(gr.update(value=None))
+                return updates
 
         def submit(name, school_level_value, *responses):
             if not name or not name.strip():
@@ -237,6 +257,13 @@ def create_final_survey():
         # 이벤트 바인딩
         all_components = [name_input, school_level] + list(all_responses.values())
         submit_btn.click(fn=submit, inputs=all_components, outputs=[output_text, report_output])
+
+        # 샘플 체크박스 이벤트 바인딩
+        sample_checkbox.change(
+            fn=fill_sample_data,
+            inputs=[sample_checkbox],
+            outputs=list(all_responses.values())
+        )
 
         chat_send.click(
             fn=chat_respond,

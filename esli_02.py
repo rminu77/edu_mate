@@ -301,7 +301,7 @@ def generate_report_with_llm(student_name: str, responses: dict, school_level: s
         - 주요 동기 유형: {m_type}
         - 학습 전략/기술 분석: {s_analysis}
         - 학습 방해 요인 분석: {h_analysis}
-        - 구체적인 점수나 수치는 언급하지 말고, 전반적인 경향성만 설명해줘
+        - 구체적인 점수나 수치는 언급하지 말고, 전반적인 경향성만 설명해줘 : {score_table_md}
         
         [작성 지침]
         - 학생의 학습 성향을 10문장내로 간결하게 요약해줘.
@@ -341,6 +341,13 @@ def generate_report_with_llm(student_name: str, responses: dict, school_level: s
         ### 3. 학습 방해 요인: 내 공부를 막는 것은 없는가?
 
         {hindrance_comment}
+
+        ---
+
+        ### 이건 결과에 안나옴 디버깅용
+
+        {score_table_md}        
+        
         """
 
         # --- 4. 결과를 데이터베이스에 저장 ---
