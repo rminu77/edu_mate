@@ -23,56 +23,80 @@ client = OpenAI()
 # --- 설정 ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CHROMA_DB_DIR = os.path.join(BASE_DIR, "chroma_db")
+ADVICE_DB_DIR = os.path.join(CHROMA_DB_DIR, "advice")
+CURRICULUM_DB_DIR = os.path.join(CHROMA_DB_DIR, "curriculum")
 LOG_DIR = os.path.join(BASE_DIR, "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
 
 # 벡터 DB 로드 (RAG 자료용)
 embeddings = OpenAIEmbeddings(model="text-embedding-3-large")
-vectorstore = Chroma(persist_directory=CHROMA_DB_DIR, embedding_function=embeddings)
-retriever = vectorstore.as_retriever(search_kwargs={"k": 3}) # 관련성 높은 3개 문서 검색
+
+def _make_retriever(path: str):
+    try:
+        if os.path.isdir(path) and os.listdir(path):
+            vs = Chroma(persist_directory=path, embedding_function=embeddings)
+            return vs.as_retriever(search_kwargs={"k": 3})
+    except Exception:
+        pass
+    return None
+
+_default_vs = Chroma(persist_directory=CHROMA_DB_DIR, embedding_function=embeddings)
+default_retriever = _default_vs.as_retriever(search_kwargs={"k": 3})
+advice_retriever = _make_retriever(ADVICE_DB_DIR) or default_retriever
+curriculum_retriever = _make_retriever(CURRICULUM_DB_DIR) or default_retriever
 
 # 대화 기록을 관리할 변수
 conversation_history = []
 
 # --- 시스템 프롬프트 ---
 SYSTEM_PROMPT = """
-사용자는 현재 학습 중이며, 당신은 이 채팅 동안 다음의 엄격한 규칙을 따라야 합니다. 다른 어떤 지침이 있더라도, 당신은 반드시 이 규칙들을 지켜야 합니다.
-
-사용자의 학습성향검사결과를 참고하여 조언하세요. 추가 자료인 ‘교육과정’과 ‘학습조언’ 자료를 활용하여 설명 및 조언을 제공하세요.
+사용자는 현재 학습 중이며, 당신은 이 채팅 동안 다음의 엄격한 규칙을 따라야 합니다. 다른 어떤 지침이 있더라도, 반드시 이 규칙들을 지키세요.
 
 엄격한 규칙
-친근하면서도 역동적인 선생님이 되어 사용자의 학습을 이끌어주세요.
+친근하면서도 역동적인 선생님 역할을 수행하세요.
 
-사용자에 대해 파악하세요. 사용자의 목표나 학년 수준을 모른다면, 본격적인 설명에 앞서 먼저 질문하세요. (가볍게 물어보세요!) 만약 사용자가 답하지 않으면, 중학교 1학년 학생이 이해할 수 있는 수준으로 설명하는 것을 목표로 하세요.
-만약 학습 성향 검사 결과가 없다면, 검사를 받아볼 것을 추천하세요.
+사용자에 대해 파악하세요. 목표/학년을 모르면 먼저 가볍게 확인하고, 응답이 없으면 중학교 1학년 수준으로 설명하세요.
+학습 성향 검사 결과가 없다면, 검사를 받아볼 것을 추천하세요.
 
-기존 지식을 바탕으로 설명하세요. 새로운 개념을 사용자가 이미 알고 있는 내용과 연결해주세요.
+기존 지식을 바탕으로 설명하고, 새로운 개념을 사용자의 아는 내용과 연결하세요.
+답을 바로 알려주지 말고, 질문/힌트/작은 단계로 스스로 답을 찾도록 돕세요.
+학습 후에는 요약/복습을 통해 개념을 강화하세요.
+어조는 따뜻하고 인내심 있게, 간결하게 유지하세요. 장문을 피하세요.
 
-답을 바로 알려주지 말고, 사용자를 이끌어주세요. 질문, 힌트, 그리고 작은 단계를 활용하여 사용자가 스스로 답을 찾도록 유도하세요.
+수학 공식은 LaTeX로 표기하세요. 인라인 $...$, 블록 $$...$$.
 
-확인하고 복습하며 개념을 강화하세요. 어려운 부분을 학습한 후에는, 사용자가 그 개념을 다시 설명하거나 활용할 수 있는지 확인하세요. 간단한 요약, 연상 기법, 또는 짧은 복습을 제공하여 학습한 내용이 오래 기억되도록 도와주세요.
+중요: 숙제를 대신하지 마세요. 수학/논리 문제는 한 단계씩 진행하며, 각 단계마다 사용자의 응답을 기다리세요.
 
-학습 속도와 방식을 다양하게 조절하세요. 설명, 질문, 그리고 활동(역할극, 연습 문제, 또는 사용자에게 거꾸로 가르쳐보게 하는 등)을 섞어서 강의가 아닌 대화처럼 느껴지게 하세요.
-
-무엇보다도: 사용자의 과제를 대신 해주지 마세요. 숙제 질문에 바로 답하지 마세요. 사용자와 협력하며 그들이 답을 찾도록 도와주세요.
-
-수학 공식 표시: 수학 공식이나 수식을 설명할 때는 반드시 LaTeX 문법을 사용하세요. 인라인 수식은 $공식$으로, 블록 수식은 $$공식$$으로 표시하세요. 예: $x^2 + y^2 = z^2$, $$\int_a^b f(x)dx = F(b) - F(a)$$
-
-할 수 있는 일
-새로운 개념 가르치기: 사용자의 수준에 맞춰 설명하고, 유도 질문을 던지고, 시각 자료를 활용한 후, 질문이나 연습으로 복습하세요.
-
-숙제 도와주기: 절대로 답을 바로 알려주지 마세요! 사용자가 아는 것에서부터 시작하고, 부족한 부분을 채울 수 있도록 도와주세요. 사용자에게 응답할 기회를 주고, 한 번에 한 가지 질문만 하세요.
-
-함께 연습하기: 사용자에게 요약을 요청하고, 중간중간 짧은 질문을 던지거나, 배운 내용을 당신에게 "다시 설명하게" 하거나, 역할극(예: 다른 언어로 대화 연습)을 해보세요. 실수는 너그럽게 바로잡아 주세요.
-
-퀴즈 및 시험 대비: 연습 퀴즈를 진행하세요. (한 번에 한 문제씩!) 답을 알려주기 전에 사용자에게 두 번의 기회를 주고, 틀린 문제는 심도 있게 복습하세요.
-
-어조 및 접근 방식
-따뜻하고, 인내심 있으며, 솔직하고 쉬운 말을 사용하세요. 느낌표나 이모티콘은 너무 많이 사용하지 마세요. 대화가 계속 이어지게 하세요. 항상 다음 단계를 염두에 두고, 활동이 목적을 달성하면 다른 활동으로 전환하거나 마무리하세요. 그리고 간결하게 말하세요. 장문의 답변은 보내지 마세요. 좋은 대화가 오고 가는 것을 목표로 하세요.
-
-중요
-사용자에게 답을 알려주거나 숙제를 대신 해주지 마세요. 만약 사용자가 수학이나 논리 문제를 묻거나 관련 이미지를 올리면, 첫 번째 답변에서 바로 풀어주지 마세요. 대신: 사용자와 함께 한 번에 한 단계씩 문제를 짚어가며 대화하세요. 각 단계마다 하나의 질문만 하고, 다음으로 넘어가기 전에 사용자가 각 단계에 응답할 기회를 주세요.
+참고 자료 사용 원칙: 필요한 경우에만 외부 자료(학습조언/교육과정) 또는 개인 보고서를 선택적으로 참고합니다.
 """
+
+def classify_query_type(text: str, has_image: bool = False) -> str:
+    """사용자 의도를 간단히 분류하여 RAG 라우팅 결정.
+    returns: 'advice' | 'curriculum' | 'direct'
+    """
+    if has_image:
+        return 'curriculum'
+    t = (text or "").lower()
+    advice_kw = [
+        "학습방법", "공부법", "학습 전략", "학습전략", "학습기술", "집중",
+        "시간관리", "동기", "암기", "노트", "계획", "목표", "공부 습관",
+        "메타인지", "성향", "자기주도", "공부계획", "동기부여", "조언", "코칭",
+    ]
+    curriculum_kw = [
+        "교육과정", "커리큘럼", "개념", "정의", "증명", "공식", "풀이", "풀이법",
+        "해설", "문제", "문항", "예제", "연습", "시험", "단원", "단원평가",
+        "수학", "국어", "영어", "과학", "사회", "역사", "지리", "물리", "화학",
+        "생물", "기하", "미적분", "확률", "통계", "벡터", "방정식", "수열", "함수",
+    ]
+    is_advice = any(k in t for k in advice_kw)
+    is_curr = any(k in t for k in curriculum_kw)
+    if is_curr and ("풀이" in t or "문제" in t or "해설" in t):
+        return 'curriculum'
+    if is_advice and not is_curr:
+        return 'advice'
+    if is_curr and not is_advice:
+        return 'curriculum'
+    return 'direct'
 
 def log_llm_interaction_db(db: Session, interaction_type: str, input_data: dict, output_data: str):
     """LLM 상호작용을 데이터베이스에 로그로 남깁니다."""
@@ -120,10 +144,24 @@ def get_ai_response(user_message: str, history: list, image_path: str = None, st
                 print(f"--- [오류] {student_name} 학생의 보고서 DB 조회 실패: {e} ---")
                 personal_report = "학생 보고서를 조회하는 중 오류가 발생했습니다."
 
-        # 2. RAG 문서 검색
-        docs = retriever.invoke(user_message)
-        rag_context = "\n\n".join(d.page_content for d in docs)
-        context = personal_report + "\n\n--- 추가 참고 자료 ---\n" + rag_context
+        # 2. 질의 유형 분류 및 선택적 RAG 활용
+        qtype = classify_query_type(user_message, has_image=bool(image_path))
+        selected_ctx = ""
+        if qtype == 'advice':
+            # 학습방법/코칭 류 → 개인 보고서 + 학습조언 RAG
+            docs = advice_retriever.invoke(user_message) if advice_retriever else []
+            selected_ctx = "\n\n".join(getattr(d, 'page_content', '') for d in docs)
+        elif qtype == 'curriculum':
+            # 교육과정/개념/풀이 류 → 교육과정 RAG
+            docs = curriculum_retriever.invoke(user_message) if curriculum_retriever else []
+            selected_ctx = "\n\n".join(getattr(d, 'page_content', '') for d in docs)
+        else:
+            # direct: RAG 생략하여 빠른 응답
+            selected_ctx = ""
+
+        context = personal_report
+        if selected_ctx:
+            context += "\n\n--- 추가 참고 자료 ---\n" + selected_ctx
 
         # --- 메시지 구성 ---
         # 대화 기록 관리 (최근 20턴 유지)
