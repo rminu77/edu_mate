@@ -29,6 +29,18 @@ class LLMLog(Base):
     input_data = Column(Text, nullable=False)
     output_data = Column(Text, nullable=False)
 
+# 검사 진행상황 임시 저장
+class SurveyProgress(Base):
+    __tablename__ = "survey_progress"
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(String, index=True, nullable=False)  # 세션 식별자
+    student_name = Column(String, nullable=True)  # 학생 이름 (입력된 경우)
+    school_level = Column(String, nullable=True)  # 학교급
+    progress_data = Column(Text, nullable=False)  # JSON 형태의 진행상황
+    last_updated = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    completed = Column(Integer, default=0)  # 완료된 문항 수
+    total_questions = Column(Integer, default=150)  # 전체 문항 수
+
 # 참조 데이터 (표준점수 평균/표준편차)
 class ReferenceStandard(Base):
     __tablename__ = "reference_standards"

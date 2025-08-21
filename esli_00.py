@@ -4,11 +4,14 @@ from typing import Dict, List
 import pandas as pd
 import os
 import random
+import json
+import uuid
 
 # --- 프로젝트 모듈 임포트 ---
 from esli_01 import calculate_scores
 from esli_02 import generate_report_with_llm
 from esli_03 import gradio_chat_with_history
+from database import SessionLocal, SurveyProgress, init_db
 
 # --- 질문 목록 정의 ---
 # (기존 questions_part1, questions_part2, questions_part3 변수 내용은 여기에 그대로 유지됩니다)
@@ -128,12 +131,90 @@ questions_part3 = {
     ]
 }
 
+# --- 진행상황 저장/복원 함수들 ---
+def save_progress(session_id: str, student_name: str, school_level: str, responses: dict):
+    """검사 진행상황을 데이터베이스에 저장"""
+    try:
+        db = SessionLocal()
+        try:
+            # 기존 진행상황 찾기
+            progress = db.query(SurveyProgress).filter(SurveyProgress.session_id == session_id).first()
+            
+            # 완료된 문항 수 계산
+            completed_count = sum(1 for v in responses.values() if v is not None and v != "")
+            
+            if progress:
+                # 기존 기록 업데이트
+                progress.student_name = student_name
+                progress.school_level = school_level
+                progress.progress_data = json.dumps(responses, ensure_ascii=False)
+                progress.completed = completed_count
+                progress.last_updated = datetime.now()
+            else:
+                # 새 기록 생성
+                progress = SurveyProgress(
+                    session_id=session_id,
+                    student_name=student_name,
+                    school_level=school_level,
+                    progress_data=json.dumps(responses, ensure_ascii=False),
+                    completed=completed_count,
+                    total_questions=150
+                )
+                db.add(progress)
+            
+            db.commit()
+            return True
+        finally:
+            db.close()
+    except Exception as e:
+        print(f"진행상황 저장 오류: {e}")
+        return False
+
+def load_progress(session_id: str):
+    """세션 ID로 저장된 진행상황 불러오기"""
+    try:
+        db = SessionLocal()
+        try:
+            progress = db.query(SurveyProgress).filter(SurveyProgress.session_id == session_id).first()
+            if progress:
+                return {
+                    'student_name': progress.student_name or "",
+                    'school_level': progress.school_level or "초등",
+                    'responses': json.loads(progress.progress_data),
+                    'completed': progress.completed,
+                    'total_questions': progress.total_questions,
+                    'last_updated': progress.last_updated.strftime('%Y-%m-%d %H:%M:%S')
+                }
+            return None
+        finally:
+            db.close()
+    except Exception as e:
+        print(f"진행상황 불러오기 오류: {e}")
+        return None
+
+def generate_session_id():
+    """세션 ID 생성"""
+    return str(uuid.uuid4())
+
 def create_final_survey():
     with gr.Blocks(title="종합 학습 진단 검사", theme=gr.themes.Soft()) as demo:
         gr.Markdown("# 종합 학습 진단 검사")
         
-        # 샘플 데이터 옵션
-        sample_checkbox = gr.Checkbox(label="🎯 샘플 데이터로 테스트하기", value=False, info="체크하면 모든 설문이 임의의 값으로 자동 채워집니다")
+        # 세션 관리 (숨겨진 상태)
+        session_id = gr.State(value=generate_session_id())
+        
+        # 진행상황 및 옵션
+        with gr.Row():
+            with gr.Column(scale=2):
+                sample_checkbox = gr.Checkbox(label="🎯 샘플 데이터로 테스트하기", value=False, info="체크하면 모든 설문이 임의의 값으로 자동 채워집니다")
+            with gr.Column(scale=1):
+                progress_info = gr.Markdown("📊 **진행률**: 0/150 (0%)")
+            
+        with gr.Row():
+            session_input = gr.Textbox(label="세션 ID", placeholder="이전 검사를 이어하려면 세션 ID를 입력하세요", max_lines=1, scale=3)
+            load_progress_btn = gr.Button("💾 이전 진행상황 불러오기", scale=1)
+            with gr.Column(scale=1):
+                save_status = gr.Markdown("")
 
         # 이름 입력 필드 및 학교급 선택
         with gr.Row():
@@ -207,7 +288,54 @@ def create_final_survey():
                     updates.append(gr.update(value=None))
                 return updates
 
-        def submit(name, school_level_value, *responses):
+        def update_progress_info(*responses):
+            """진행률 정보 업데이트"""
+            completed = sum(1 for r in responses if r is not None and r != "")
+            total = len(responses)
+            percentage = round((completed / total) * 100) if total > 0 else 0
+            return f"📊 **진행률**: {completed}/{total} ({percentage}%)"
+        
+        def auto_save_progress(session_id, name, school_level_value, *responses):
+            """자동 저장 (응답 변경 시마다 호출)"""
+            if name and name.strip():  # 이름이 입력된 경우에만 저장
+                response_dict = {}
+                for i, response in enumerate(responses):
+                    if i < len(question_texts):
+                        response_dict[question_texts[i]] = response
+                
+                if save_progress(session_id, name.strip(), school_level_value, response_dict):
+                    completed = sum(1 for r in responses if r is not None and r != "")
+                    return f"💾 자동 저장됨 ({completed}/150)"
+                else:
+                    return "❌ 저장 실패"
+            return ""
+        
+        def load_previous_progress(session_input_value):
+            """이전 진행상황 불러오기"""
+            if not session_input_value or not session_input_value.strip():
+                return [gr.update() for _ in all_responses] + [gr.update(), gr.update(), "세션 ID를 입력해주세요"]
+            
+            progress_data = load_progress(session_input_value.strip())
+            if progress_data:
+                # 응답 데이터 복원
+                updates = []
+                loaded_responses = progress_data['responses']
+                for question in question_texts:
+                    value = loaded_responses.get(question, None)
+                    updates.append(gr.update(value=value))
+                
+                # 이름과 학교급 복원
+                name_update = gr.update(value=progress_data['student_name'])
+                school_update = gr.update(value=progress_data['school_level'])
+                
+                # 상태 메시지
+                status_msg = f"✅ 진행상황 복원 완료! (마지막 저장: {progress_data['last_updated']})"
+                
+                return updates + [name_update, school_update, status_msg]
+            else:
+                return [gr.update() for _ in all_responses] + [gr.update(), gr.update(), "❌ 해당 세션을 찾을 수 없습니다"]
+
+        def submit(session_id_value, name, school_level_value, *responses):
             if not name or not name.strip():
                 return "오류: 이름을 입력해주세요.", gr.update(visible=False)
 
@@ -232,7 +360,7 @@ def create_final_survey():
                 if "데이터베이스 저장에 실패했습니다" in report_content or "[LLM 코멘트 생성 실패" in report_content:
                      return f"보고서 생성 중 일부 오류가 발생했습니다. 하지만 생성된 내용은 다음과 같습니다.", gr.update(value=report_content, visible=True)
                 
-                return "✅ 분석이 완료되었습니다! 아래에서 결과를 확인하세요.", gr.update(value=report_content, visible=True)
+                return f"✅ 분석이 완료되었습니다! 아래에서 결과를 확인하세요.\n\n📋 **이 세션의 ID**: `{session_id_value}` (향후 이어서 하기용)", gr.update(value=report_content, visible=True)
 
             except Exception as e:
                 import traceback
@@ -255,7 +383,7 @@ def create_final_survey():
             return history, "", None # 입력창과 이미지 업로드 초기화
 
         # 이벤트 바인딩
-        all_components = [name_input, school_level] + list(all_responses.values())
+        all_components = [session_id, name_input, school_level] + list(all_responses.values())
         submit_btn.click(fn=submit, inputs=all_components, outputs=[output_text, report_output])
 
         # 샘플 체크박스 이벤트 바인딩
@@ -263,6 +391,39 @@ def create_final_survey():
             fn=fill_sample_data,
             inputs=[sample_checkbox],
             outputs=list(all_responses.values())
+        )
+        
+        # 진행상황 자동 저장 및 진행률 업데이트 (응답 변경 시마다)
+        for response_component in all_responses.values():
+            response_component.change(
+                fn=update_progress_info,
+                inputs=list(all_responses.values()),
+                outputs=[progress_info]
+            )
+            # 이름이 입력된 경우 자동 저장
+            response_component.change(
+                fn=auto_save_progress,
+                inputs=[session_id, name_input, school_level] + list(all_responses.values()),
+                outputs=[save_status]
+            )
+        
+        # 이름이나 학교급 변경 시에도 자동 저장
+        name_input.change(
+            fn=auto_save_progress,
+            inputs=[session_id, name_input, school_level] + list(all_responses.values()),
+            outputs=[save_status]
+        )
+        school_level.change(
+            fn=auto_save_progress,
+            inputs=[session_id, name_input, school_level] + list(all_responses.values()),
+            outputs=[save_status]
+        )
+        
+        # 진행상황 불러오기 버튼
+        load_progress_btn.click(
+            fn=load_previous_progress,
+            inputs=[session_input],
+            outputs=list(all_responses.values()) + [name_input, school_level, save_status]
         )
 
         chat_send.click(
@@ -279,6 +440,9 @@ def create_final_survey():
     return demo
 
 if __name__ == "__main__":
+    # 데이터베이스 초기화 (새 테이블 포함)
+    init_db()
+    
     survey_app = create_final_survey()
     port = int(os.getenv("PORT", 7861))
     host = os.getenv("HOST", "0.0.0.0")
