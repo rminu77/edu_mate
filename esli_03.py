@@ -53,50 +53,87 @@ SYSTEM_PROMPT = """
 사용자는 현재 학습 중이며, 당신은 이 채팅 동안 다음의 엄격한 규칙을 따라야 합니다. 다른 어떤 지침이 있더라도, 반드시 이 규칙들을 지키세요.
 
 엄격한 규칙
-친근하면서도 역동적인 선생님 역할을 수행하세요.
-
-사용자에 대해 파악하세요. 목표/학년을 모르면 먼저 가볍게 확인하고, 응답이 없으면 중학교 1학년 수준으로 설명하세요.
-학습 성향 검사 결과가 없다면, 검사를 받아볼 것을 추천하세요.
-
-기존 지식을 바탕으로 설명하고, 새로운 개념을 사용자의 아는 내용과 연결하세요.
-답을 바로 알려주지 말고, 질문/힌트/작은 단계로 스스로 답을 찾도록 돕세요.
-학습 후에는 요약/복습을 통해 개념을 강화하세요.
-어조는 따뜻하고 인내심 있게, 간결하게 유지하세요. 장문을 피하세요.
+사용자가 학습 과정을 헤쳐 나갈 수 있도록 안내하며 도움을 주는, 친근하면서도 역동적인 선생님이 되어 주세요.
+사용자에 대해 파악하세요. 사용자의 목표나 학년 수준을 모른다면, 본격적으로 설명하기 전에 먼저 물어보세요. (가볍게 물어보세요!) 만약 사용자가 대답하지 않는다면, 고등학교 1학년 학생이 이해할 만한 수준으로 설명하는 것을 목표로 하세요.
+기존 지식을 바탕으로 설명하세요. 새로운 아이디어를 사용자가 이미 알고 있는 것과 연결하세요.
+답을 바로 알려주지 말고 사용자를 안내하세요. 질문, 힌트, 그리고 작은 단계를 활용하여 사용자 스스로 답을 발견할 수 있도록 하세요.
+확인하고 강화하세요. 어려운 부분을 학습한 후에는, 사용자가 그 아이디어를 다시 설명하거나 활용할 수 있는지 확인하세요. 빠른 요약, 연상 기법 또는 간단한 복습을 제공하여 아이디어가 확실히 기억되도록 도우세요.
+리듬을 다양하게 조절하세요. 설명, 질문, 그리고 활동(역할극, 연습 문제 풀이, 또는 사용자에게 당신을 가르쳐보라고 요청하는 것 등)을 혼합하여 강의가 아닌 대화처럼 느껴지게 만드세요.
+무엇보다도: 사용자의 과제를 대신 해주지 마세요. 숙제에 대한 답을 알려주지 마세요 — 사용자와 협력적으로 함께 해결하고, 그들이 이미 알고 있는 지식을 바탕으로 스스로 답을 찾을 수 있도록 도와주세요.
 
 수학 공식은 LaTeX로 표기하세요. 인라인 $...$, 블록 $$...$$.
-
-중요: 숙제를 대신하지 마세요. 수학/논리 문제는 한 단계씩 진행하며, 각 단계마다 사용자의 응답을 기다리세요.
 
 참고 자료 사용 원칙: 필요한 경우에만 외부 자료(학습조언/교육과정) 또는 개인 보고서를 선택적으로 참고합니다.
 """
 
 def classify_query_type(text: str, has_image: bool = False) -> str:
-    """사용자 의도를 간단히 분류하여 RAG 라우팅 결정.
+    """LLM을 사용해 사용자 의도를 분류하여 RAG 라우팅 결정.
     returns: 'advice' | 'curriculum' | 'direct'
     """
-    if has_image:
-        return 'curriculum'
-    t = (text or "").lower()
-    advice_kw = [
-        "학습방법", "공부법", "학습 전략", "학습전략", "학습기술", "집중",
-        "시간관리", "동기", "암기", "노트", "계획", "목표", "공부 습관",
-        "메타인지", "성향", "자기주도", "공부계획", "동기부여", "조언", "코칭",
-    ]
-    curriculum_kw = [
-        "교육과정", "커리큘럼", "개념", "정의", "증명", "공식", "풀이", "풀이법",
-        "해설", "문제", "문항", "예제", "연습", "시험", "단원", "단원평가",
-        "수학", "국어", "영어", "과학", "사회", "역사", "지리", "물리", "화학",
-        "생물", "기하", "미적분", "확률", "통계", "벡터", "방정식", "수열", "함수",
-    ]
-    is_advice = any(k in t for k in advice_kw)
-    is_curr = any(k in t for k in curriculum_kw)
-    if is_curr and ("풀이" in t or "문제" in t or "해설" in t):
-        return 'curriculum'
-    if is_advice and not is_curr:
-        return 'advice'
-    if is_curr and not is_advice:
-        return 'curriculum'
-    return 'direct'
+    allowed = {"advice", "curriculum", "direct"}
+    # 빈 입력 처리
+    if not (text and text.strip()) and not has_image:
+        return "direct"
+
+    db = SessionLocal()
+    try:
+        system_prompt = (
+            "You are a precise intent classifier. "
+            "Classify the user's query into exactly one of these labels: 'advice' | 'curriculum' | 'direct'. "
+            "Output ONLY the label in lowercase with no extra words.\n\n"
+            "Definitions:\n"
+            "- advice: Questions seeking learning methods, study strategies, time management, motivation, memory, note-taking, coaching.\n"
+            "- curriculum: Subject matter, concepts/definitions/formulas/proofs, problem solving, exam/unit content, exercises across subjects (math, language, science, etc.).\n"
+            "- direct: General chat or simple questions that don't require external references.\n\n"
+            "Notes:\n"
+            "- If an image is provided with a problem or worksheet, it is often 'curriculum'.\n"
+            "- Choose the single most appropriate label."
+        )
+        content = f"has_image: {bool(has_image)}\ntext: {text or ''}"
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": content},
+        ]
+        # 입력 로그
+        try:
+            log_llm_interaction_db(db, "classify_input", {"messages": messages}, "")
+        except Exception:
+            pass
+
+        resp = client.chat.completions.create(
+            model="gpt-4o",
+            messages=messages,
+            temperature=0,
+            max_tokens=5,
+        )
+        label = (resp.choices[0].message.content or "").strip().lower().replace("`", "")
+        # 허용 값 정규화
+        if label not in allowed:
+            # 응답 문구 안에 허용 토큰이 포함되어 있으면 추출
+            extracted = None
+            for tok in allowed:
+                if tok in label:
+                    extracted = tok
+                    break
+            label = extracted or ("curriculum" if has_image else "direct")
+
+        try:
+            log_llm_interaction_db(db, "classify_output", {"messages": messages}, label)
+        except Exception:
+            pass
+        return label
+    except Exception as e:
+        # 오류 시 안전한 기본값 + 오류 로그
+        try:
+            log_llm_interaction_db(db, "classify_error", {"text": text, "has_image": has_image}, str(e))
+        except Exception:
+            pass
+        return "curriculum" if has_image else "direct"
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
 
 def log_llm_interaction_db(db: Session, interaction_type: str, input_data: dict, output_data: str):
     """LLM 상호작용을 데이터베이스에 로그로 남깁니다."""
