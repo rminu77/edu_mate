@@ -379,7 +379,7 @@ def create_final_survey():
                 
                 # 2. 보고서 생성 및 DB 저장 (esli_02)
                 # generate_report_with_llm이 scored_responses 딕셔너리와 학교급을 함께 받는다고 가정
-                report_content = generate_report_with_llm(student_name=name.strip(), responses=scored_responses, school_level=school_level_value)
+                report_content = generate_report_with_llm(student_name=name.strip(), responses=scored_responses, school_level=school_level_value, raw_scores_df=raw_scores_df)
 
                 if "데이터베이스 저장에 실패했습니다" in report_content or "[LLM 코멘트 생성 실패" in report_content:
                      return f"보고서 생성 중 일부 오류가 발생했습니다. 하지만 생성된 내용은 다음과 같습니다.", gr.update(value=report_content, visible=True)

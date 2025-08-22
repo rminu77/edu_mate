@@ -154,9 +154,11 @@ def call_llm_for_report(prompt):
         return f"--- [LLM 코멘트 생성 실패: {e}] ---"
 
 
-def generate_report_with_llm(student_name: str, responses: dict, school_level: str = "초등"):
+def generate_report_with_llm(student_name: str, responses: dict, school_level: str = "초등", raw_scores_df: Optional[pd.DataFrame] = None):
     """
     학생 데이터를 분석하고 LLM을 호출하여 맞춤형 보고서를 생성하고, 결과를 DB에 저장합니다.
+    - 원점수는 가능하면 외부에서 계산된 값을 그대로 사용합니다(raw_scores_df 전달 시).
+    - raw_scores_df가 없을 경우에만 안전한 fallback 방식(질문→항목 매핑 기반)으로 원점수를 근사합니다.
     """
     db = SessionLocal()
     try:
@@ -173,46 +175,61 @@ def generate_report_with_llm(student_name: str, responses: dict, school_level: s
         std_info_df = get_std_info_df(ref_level)
         percentile_df = get_percentile_df()
 
-        # 전달받은 responses로부터 항목별 원점수 집계 (DB의 질문→항목 매핑 사용)
+        # 1) 선계산된 원점수 사용 (esli_01.calculate_scores 결과)
         student_raw_scores = {}
-        # 전수 매핑(정확 문항 텍스트)이 우선 (메모리 캐시)
-        pattern_to_name = get_question_map_pairs()
-        buckets = {}
-        for q, val in responses.items():
-            # 정확 일치 우선
-            hit = False
-            for pattern, name in pattern_to_name:
-                if q == pattern:
-                    buckets.setdefault(name, []).append(val)
-                    hit = True
-                    break
-            if hit:
-                continue
-            # 안전장치: 포함 패턴 fallback (예외적으로)
-            for pattern, name in pattern_to_name:
-                if pattern in q:
-                    buckets.setdefault(name, []).append(val)
-                    hit = True
-                    break
-            # 미매핑 저장
-            if not hit:
-                try:
-                    um_sess = SessionLocal()
+        if raw_scores_df is not None and isinstance(raw_scores_df, pd.DataFrame) and not raw_scores_df.empty:
+            try:
+                row_dict = raw_scores_df.iloc[0].to_dict()
+                for k, v in row_dict.items():
+                    # NaN/None 방지 및 숫자 변환
                     try:
-                        row = um_sess.query(ReferenceQuestionUnmapped).filter_by(question_text=q).first()
-                        if row:
-                            row.count = (row.count or 0) + 1
-                            row.last_seen = datetime.now()
-                        else:
-                            um_sess.add(ReferenceQuestionUnmapped(question_text=q))
-                        um_sess.commit()
-                    finally:
-                        um_sess.close()
-                except Exception:
-                    pass
-        for name, vals in buckets.items():
-            if len(vals) > 0:
-                student_raw_scores[name] = float(sum(vals)) / len(vals) * 25  # 1~4척도 → 100점 환산 근사
+                        student_raw_scores[str(k)] = float(v)
+                    except Exception:
+                        continue
+            except Exception:
+                student_raw_scores = {}
+
+        # 2) fallback: 질문→항목 매핑 기반 근사 (가능한 한 사용 지양)
+        if not student_raw_scores:
+            pattern_to_name = get_question_map_pairs()
+            buckets = {}
+            for q, val in responses.items():
+                hit = False
+                # 정확 일치 우선
+                for pattern, name in pattern_to_name:
+                    if q == pattern:
+                        buckets.setdefault(name, []).append(val)
+                        hit = True
+                        break
+                if hit:
+                    continue
+                # 포함 패턴 fallback
+                for pattern, name in pattern_to_name:
+                    if pattern in q:
+                        buckets.setdefault(name, []).append(val)
+                        hit = True
+                        break
+                # 미매핑 저장 (관찰용)
+                if not hit:
+                    try:
+                        um_sess = SessionLocal()
+                        try:
+                            row = um_sess.query(ReferenceQuestionUnmapped).filter_by(question_text=q).first()
+                            if row:
+                                row.count = (row.count or 0) + 1
+                                row.last_seen = datetime.now()
+                            else:
+                                um_sess.add(ReferenceQuestionUnmapped(question_text=q))
+                            um_sess.commit()
+                        finally:
+                            um_sess.close()
+                    except Exception:
+                        pass
+            for name, vals in buckets.items():
+                if len(vals) > 0:
+                    # 기존 근사식(1~4 척도 평균 × 25)은 기준표 스케일과 다를 수 있으므로
+                    # fallback에서만 제한적으로 사용
+                    student_raw_scores[name] = float(sum(vals)) / len(vals) * 25
 
 
         # 표준점수 계산
