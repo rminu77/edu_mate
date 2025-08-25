@@ -271,6 +271,8 @@ def create_final_survey():
                 submit_btn = gr.Button("제출", variant="primary")
                 output_text = gr.Textbox(label="처리 상태", interactive=False, placeholder="모든 문항에 답변 후 제출 버튼을 눌러주세요.")
                 report_output = gr.Markdown(label="학습 성향 분석 보고서", visible=False)
+                # MD 파일 다운로드 버튼
+                download_btn = gr.File(label="보고서(MD) 다운로드", file_count="single", visible=False)
 
             # 우측: 채팅 영역
             with gr.Column(scale=2):
@@ -380,16 +382,34 @@ def create_final_survey():
                 # 2. 보고서 생성 및 DB 저장 (esli_02)
                 # generate_report_with_llm이 scored_responses 딕셔너리와 학교급을 함께 받는다고 가정
                 report_content = generate_report_with_llm(student_name=name.strip(), responses=scored_responses, school_level=school_level_value, raw_scores_df=raw_scores_df)
+                # Markdown 보고서를 MD 파일로 저장
+                file_name = f"report_{session_id_value}.md"
+                with open(file_name, 'w', encoding='utf-8') as f:
+                    f.write(report_content)
+                file_update = file_name
 
                 if "데이터베이스 저장에 실패했습니다" in report_content or "[LLM 코멘트 생성 실패" in report_content:
-                     return f"보고서 생성 중 일부 오류가 발생했습니다. 하지만 생성된 내용은 다음과 같습니다.", gr.update(value=report_content, visible=True)
+                     return (
+                         f"보고서 생성 중 일부 오류가 발생했습니다. 하지만 생성된 내용은 다음과 같습니다.",
+                         gr.update(value=report_content, visible=True),
+                         gr.update(value=file_update, visible=True)
+                     )
                 
-                return f"✅ 분석이 완료되었습니다! 아래에서 결과를 확인하세요.\n\n📋 **이 세션의 ID**: `{session_id_value}` (향후 이어서 하기용)", gr.update(value=report_content, visible=True)
+                return (
+                    f"✅ 분석이 완료되었습니다! 아래에서 결과를 확인하세요.\n\n📋 **이 세션의 ID**: `{session_id_value}` (향후 이어서 하기용)",
+                    gr.update(value=report_content, visible=True),
+                    gr.update(value=file_update, visible=True)
+                )
 
             except Exception as e:
                 import traceback
                 traceback.print_exc()
-                return f"분석 처리 중 심각한 오류 발생: {e}", gr.update(visible=False)
+                # 오류 시 다운로드 버튼 숨김
+                return (
+                    f"분석 처리 중 심각한 오류 발생: {e}",
+                    gr.update(visible=False),
+                    gr.update(visible=False)
+                )
 
         def chat_respond(message, history, image, name):
             if not (message and message.strip()) and not image:
@@ -408,7 +428,12 @@ def create_final_survey():
 
         # 이벤트 바인딩
         all_components = [session_id, name_input, school_level] + list(all_responses.values())
-        submit_btn.click(fn=submit, inputs=all_components, outputs=[output_text, report_output], concurrency_limit=15)
+        submit_btn.click(
+            fn=submit,
+            inputs=all_components,
+            outputs=[output_text, report_output, download_btn],
+            concurrency_limit=15
+        )
 
         # 샘플 체크박스 이벤트 바인딩
         sample_checkbox.change(
